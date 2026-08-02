@@ -1,32 +1,46 @@
 package main
 
 import (
-	"embed"
-	"errors"
-	"flag"
+	"context"
 	"fmt"
 	"io"
 	"os"
-
-	"github.com/mattmc3/getopt"
+	"path/filepath"
 )
 
 var version = "0.0.1"
 
-//go:embed shell/*.sh
-var shellFS embed.FS
-
 const usage = `histdb - shell history in SQLite
 
 usage:
-  histdb [options] <command> [args]
+  histdb [options]             search history, same as histdb search
+  histdb init <shell>          print shell integration to eval
+  histdb record [options]      record one command, called by the shell hooks
 
-commands:
-  init <shell>   print shell integration to eval
+search options:
+  -d, --here       only commands run in this directory
+  -r, --repo       only commands run anywhere in this repository
+  -f, --fail       only commands that failed
+  -s, --success    only commands that succeeded
+  -S, --session    only commands from this shell session
+      --like P     match commands against a SQL LIKE pattern
+  -H, --head       oldest matches instead of newest
+  -n, --limit N    rows to show (default 20)
+      --no-dups    only the newest run of each command
 
-options:
-  -h, --help     print this help
-  -v, --version  print version
+ranking:
+  -F, --sort-by-frequency   most run commands first, one row per command
+      --prefer-here         with -F, rank this directory's commands first
+
+output:
+      --plain      print command lines only, no table
+
+  -h, --help       print this help
+  -v, --version    print version
+
+environment:
+  HISTDB_FILE      database path (default $XDG_DATA_HOME/histdb/histdb.db)
+  HISTDB_SESSION   session key, set by the shell integration
 
 supported shells: zsh
 
@@ -35,62 +49,39 @@ enable in zsh:
 `
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	ctx := context.Background()
+	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "histdb: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, stdout, stderr io.Writer) error {
-	// getopt prints its own errors and usage, so silence it and own both here.
-	fs := getopt.NewFlagSet("histdb", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-
-	showHelp := fs.Define("help", false, "print this help")
-	showVersion := fs.Define("version", false, "print version")
-	fs.Aliases("h", "help", "v", "version")
-
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprint(stderr, usage)
-		return err
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "init":
+			return runInit(args[1:], stdout)
+		case "record":
+			return runRecord(ctx, args[1:], stderr)
+		case "search":
+			return runSearch(ctx, args[1:], stdout, stderr)
+		}
 	}
-
-	switch {
-	case *showHelp:
-		fmt.Fprint(stdout, usage)
-		return nil
-	case *showVersion:
-		fmt.Fprintf(stdout, "histdb %s\n", version)
-		return nil
-	}
-
-	rest := fs.Args()
-	if len(rest) == 0 {
-		fmt.Fprint(stderr, usage)
-		return errors.New("no command given")
-	}
-
-	switch rest[0] {
-	case "init":
-		return initShell(rest[1:], stdout)
-	default:
-		return fmt.Errorf("unknown command %q, try 'histdb --help'", rest[0])
-	}
+	return runSearch(ctx, args, stdout, stderr)
 }
 
-func initShell(args []string, stdout io.Writer) error {
-	if len(args) != 1 {
-		return errors.New("usage: histdb init <shell>")
+func dbPath() string {
+	if p := os.Getenv("HISTDB_FILE"); p != "" {
+		return p
 	}
 
-	// Shell snippets live in shell/ and are embedded at build time.
-	snippet, err := shellFS.ReadFile("shell/" + args[0] + ".sh")
-	if err != nil {
-		return fmt.Errorf("unsupported shell %q", args[0])
+	dir := os.Getenv("XDG_DATA_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "histdb.db"
+		}
+		dir = filepath.Join(home, ".local", "share")
 	}
-
-	fmt.Fprintf(stdout, "# histdb %s init for %s\n", version, args[0])
-	_, err = stdout.Write(snippet)
-	return err
+	return filepath.Join(dir, "histdb", "histdb.db")
 }

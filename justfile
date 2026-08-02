@@ -13,6 +13,10 @@ build:
 test:
     go test ./...
 
+# run tests with verbosity
+testv:
+    go test -v ./...
+
 # run tests with coverage summary
 cover:
     go test -cover ./...
