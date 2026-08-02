@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 )
@@ -35,8 +36,17 @@ func runInit(args []string, stdout io.Writer) error {
 	}
 
 	fmt.Fprintf(stdout, "# histdb %s init for %s\n", version, args[0])
+	// The hooks outlive the PATH they were sourced under, so name this binary.
+	if self, err := os.Executable(); err == nil {
+		fmt.Fprintf(stdout, ": ${HISTDB_BIN:=%s}\n", shellQuote(self))
+	}
 	_, err = stdout.Write(snippet)
 	return err
+}
+
+// shellQuote single-quotes s: end the string, escape a quote, start again.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func supportedShells() []string {

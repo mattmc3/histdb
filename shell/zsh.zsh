@@ -6,6 +6,11 @@ if [[ -n ${_histdb_state[loaded]:-} ]]; then
 fi
 _histdb_state[loaded]=1
 
+# `histdb init` pins HISTDB_BIN to the binary that printed this, so a later
+# change to PATH cannot stop the hooks. Falls back to PATH if it goes missing.
+: ${HISTDB_BIN:=histdb}
+[[ $HISTDB_BIN == */* && ! -x $HISTDB_BIN ]] && HISTDB_BIN=histdb
+
 # A session is one shell process under one user. HISTDB_SESSION is exported,
 # so a nested shell or an exec into sudo inherits a key that is neither, and
 # the uid and pid it carries are what catch that.
@@ -58,7 +63,7 @@ _histdb_preexec() {
 
   # Recorded before the command runs, so anything that outlives the shell is
   # already on disk. The precmd write fills in how it went.
-  command histdb record \
+  command "$HISTDB_BIN" record \
     --shell zsh \
     --session "$HISTDB_SESSION" \
     --tty "${TTY:-}" \
@@ -81,7 +86,7 @@ _histdb_precmd() {
 
   # Same session and start time as the preexec write, which is what pairs the
   # two. Backgrounded and disowned so it stays off the prompt path.
-  command histdb record \
+  command "$HISTDB_BIN" record \
     --shell zsh \
     --session "$HISTDB_SESSION" \
     --tty "${TTY:-}" \
@@ -107,7 +112,7 @@ histdb() {
   local sub
 
   case ${1:-} in
-    init|record) command histdb "$@"; return $? ;;
+    init|record) command "$HISTDB_BIN" "$@"; return $? ;;
     search) sub=$1; shift ;;
   esac
 
@@ -117,7 +122,7 @@ histdb() {
 
   # Options go after the subcommand: the binary reads argument one to choose
   # the command, so a flag in front of it would look like a search pattern.
-  command histdb $sub $opts "$@"
+  command "$HISTDB_BIN" $sub $opts "$@"
 }
 
 autoload -Uz add-zsh-hook

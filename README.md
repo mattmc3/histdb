@@ -49,6 +49,7 @@ Long forms: `--here`, `--repo`, `--fail`, `--success`, `--session`, `--head`,
 | ---------------- | -------------------------------------------------------- |
 | `HISTDB_FILE`    | database path, default `$XDG_DATA_HOME/histdb/histdb.db` |
 | `HISTDB_SESSION` | session key, set by the shell integration                |
+| `HISTDB_BIN`     | binary the hooks call, pinned by `histdb init`           |
 
 ## Ranking by frequency
 

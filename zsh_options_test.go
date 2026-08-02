@@ -162,6 +162,14 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
+// A version manager or a script can rewrite PATH after the hooks install.
+func TestZshRecordsAfterPathLosesHistdb(t *testing.T) {
+	z := newZshShell(t)
+	z.run("", "PATH=/nonexistent\necho offpath")
+
+	z.assertRecorded("PATH=/nonexistent", "echo offpath")
+}
+
 // HIST_IGNORE_SPACE: a command whose first character is a space is not
 // recorded.
 func TestZshIgnoreSpace(t *testing.T) {

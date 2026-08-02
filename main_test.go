@@ -93,10 +93,29 @@ func TestInitZsh(t *testing.T) {
 	if !strings.HasPrefix(stdout, "# histdb 0.0.1 init for zsh\n") {
 		t.Errorf("missing header: %q", stdout)
 	}
-	for _, want := range []string{"_histdb_preexec", "_histdb_precmd", "histdb record"} {
+	for _, want := range []string{"_histdb_preexec", "_histdb_precmd", `"$HISTDB_BIN" record`} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("snippet missing %q", want)
 		}
+	}
+}
+
+// init names the binary that printed the snippet, rather than leave it to PATH.
+func TestInitPinsBinaryPath(t *testing.T) {
+	stdout, _, err := exec(t, "init", "zsh")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Skip("no executable path on this platform")
+	}
+	if want := ": ${HISTDB_BIN:='" + self + "'}\n"; !strings.Contains(stdout, want) {
+		t.Errorf("snippet missing %q", want)
+	}
+	if strings.Contains(stdout, "command histdb ") {
+		t.Error("snippet still searches PATH for histdb")
 	}
 }
 
