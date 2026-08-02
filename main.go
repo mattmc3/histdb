@@ -33,10 +33,15 @@ ranking:
       --prefer-here         with -F, rank this directory's commands first
 
 output:
-      --plain      print command lines only, no table
+      --columns C  comma separated columns, in the order given
+                   id, time, dur, ret, cwd, session, cmd (default id,time,cmd)
+                   with -F: runs, last, cmd (default runs,last,cmd)
 
   -h, --help       print this help
   -v, --version    print version
+
+The id is starred when the command came from another shell session. On a
+terminal the id and ret are colored by exit status; NO_COLOR turns that off.
 
 environment:
   HISTDB_FILE      database path (default $XDG_DATA_HOME/histdb/histdb.db)

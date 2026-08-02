@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mattmc3/histdb/internal/history"
 )
@@ -166,10 +168,6 @@ func TestRecordThenSearch(t *testing.T) {
 	if !strings.Contains(stdout, "git status") || !strings.Contains(stdout, "make build") {
 		t.Fatalf("search output = %q, want both commands", stdout)
 	}
-	if !strings.HasPrefix(stdout, "time") {
-		t.Errorf("missing header row: %q", stdout)
-	}
-
 	stdout, _, err = exec(t, "--fail")
 	if err != nil {
 		t.Fatalf("search --fail: %v", err)
@@ -331,7 +329,7 @@ func TestFinishDoesNotInventCwd(t *testing.T) {
 	}
 }
 
-// Ranking by frequency, with prefix matching and plain output, is what a
+// Ranking by frequency, with prefix matching and one column, is what a
 // suggestion strategy needs.
 func TestSortByFrequency(t *testing.T) {
 	useTempDB(t)
@@ -347,8 +345,8 @@ func TestSortByFrequency(t *testing.T) {
 		}
 	}
 
-	t.Run("plain output is bare command lines", func(t *testing.T) {
-		stdout, _, err := exec(t, "-F", "--plain")
+	t.Run("one column is bare command lines", func(t *testing.T) {
+		stdout, _, err := exec(t, "-F", "--columns", "cmd")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -357,21 +355,19 @@ func TestSortByFrequency(t *testing.T) {
 		}
 	})
 
-	t.Run("table shows runs and last use", func(t *testing.T) {
+	t.Run("listing shows runs and last use", func(t *testing.T) {
 		stdout, _, err := exec(t, "-F")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
-		if !strings.HasPrefix(stdout, "runs") {
-			t.Errorf("stdout = %q, want a runs column", stdout)
-		}
-		if !strings.Contains(stdout, "5") || !strings.Contains(stdout, "ls") {
-			t.Errorf("stdout = %q, want the count beside the command", stdout)
+		want := regexp.MustCompile(`^5  \d{4}-\d\d-\d\d \d\d:\d\d  ls\n`)
+		if !want.MatchString(stdout) {
+			t.Errorf("stdout = %q, want %v", stdout, want)
 		}
 	})
 
 	t.Run("anchored pattern matches only the start", func(t *testing.T) {
-		stdout, _, err := exec(t, "-F", "--plain", "--like", "git p%")
+		stdout, _, err := exec(t, "-F", "--columns", "cmd", "--like", "git p%")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -381,7 +377,7 @@ func TestSortByFrequency(t *testing.T) {
 	})
 
 	t.Run("unanchored pattern matches anywhere", func(t *testing.T) {
-		stdout, _, err := exec(t, "-F", "--plain", "--like", "%push%")
+		stdout, _, err := exec(t, "-F", "--columns", "cmd", "--like", "%push%")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -391,7 +387,7 @@ func TestSortByFrequency(t *testing.T) {
 	})
 
 	t.Run("one suggestion", func(t *testing.T) {
-		stdout, _, err := exec(t, "-F", "--plain", "-n", "1", "--like", "git%")
+		stdout, _, err := exec(t, "-F", "--columns", "cmd", "-n", "1", "--like", "git%")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -427,7 +423,7 @@ func TestSearchLike(t *testing.T) {
 	}
 
 	t.Run("anchored", func(t *testing.T) {
-		stdout, _, err := exec(t, "--plain", "--like", "git%")
+		stdout, _, err := exec(t, "--columns", "cmd", "--like", "git%")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -437,7 +433,7 @@ func TestSearchLike(t *testing.T) {
 	})
 
 	t.Run("unanchored", func(t *testing.T) {
-		stdout, _, err := exec(t, "--plain", "--like", "%git%")
+		stdout, _, err := exec(t, "--columns", "cmd", "--like", "%git%")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -447,7 +443,7 @@ func TestSearchLike(t *testing.T) {
 	})
 
 	t.Run("underscore is a wildcard", func(t *testing.T) {
-		stdout, _, err := exec(t, "--plain", "--like", "git s_atus")
+		stdout, _, err := exec(t, "--columns", "cmd", "--like", "git s_atus")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -457,7 +453,7 @@ func TestSearchLike(t *testing.T) {
 	})
 
 	t.Run("a caller can still escape a wildcard", func(t *testing.T) {
-		stdout, _, err := exec(t, "--plain", "--like", `%50\%%`)
+		stdout, _, err := exec(t, "--columns", "cmd", "--like", `%50\%%`)
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -487,13 +483,13 @@ func TestSearchLikeIsNotInjectable(t *testing.T) {
 		`%'; DELETE FROM history WHERE 1=1; --`,
 		`' UNION SELECT 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 --`,
 	} {
-		if _, _, err := exec(t, "--plain", "--like", attack); err != nil {
+		if _, _, err := exec(t, "--columns", "cmd", "--like", attack); err != nil {
 			t.Errorf("search %q: %v", attack, err)
 		}
 	}
 
 	// Everything still there, and the search still works.
-	stdout, _, err := exec(t, "--plain")
+	stdout, _, err := exec(t, "--columns", "cmd")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -502,21 +498,140 @@ func TestSearchLikeIsNotInjectable(t *testing.T) {
 	}
 }
 
-// --plain drops the table for a plain search too.
-func TestSearchPlain(t *testing.T) {
+// The default listing is what `fc -li` prints: id, time, command, no header.
+func TestSearchDefaultListing(t *testing.T) {
 	useTempDB(t)
 
 	if _, _, err := exec(t, "record", "--cmd", "git status", "--ret", "0",
-		"--start", "100", "--end", "101"); err != nil {
+		"--start", "100", "--end", "100.5"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if _, _, err := exec(t, "record", "--cmd", "make build", "--ret", "2",
+		"--start", "200", "--end", "201"); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 
-	stdout, _, err := exec(t, "--plain")
+	stdout, _, err := exec(t)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if want := "git status\n"; stdout != want {
-		t.Errorf("stdout = %q, want %q", stdout, want)
+	want := regexp.MustCompile(
+		`^1  \d{4}-\d\d-\d\d \d\d:\d\d  git status\n` +
+			`2  \d{4}-\d\d-\d\d \d\d:\d\d  make build\n$`)
+	if !want.MatchString(stdout) {
+		t.Errorf("stdout = %q, want %v", stdout, want)
+	}
+}
+
+// The star zsh puts on another session's commands under SHARE_HISTORY.
+func TestSearchStarsOtherSessions(t *testing.T) {
+	useTempDB(t)
+
+	if _, _, err := exec(t, "record", "--cmd", "mine", "--ret", "0",
+		"--start", "100", "--end", "101"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if _, _, err := exec(t, "record", "--session", "elsewhere", "--cmd", "theirs",
+		"--ret", "0", "--start", "200", "--end", "201"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	stdout, _, err := exec(t)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for _, want := range []string{"1  ", "2* "} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want a row starting %q", stdout, want)
+		}
+	}
+}
+
+func TestSearchColumns(t *testing.T) {
+	useTempDB(t)
+
+	if _, _, err := exec(t, "record", "--cmd", "make build", "--ret", "2",
+		"--cwd", "/tmp", "--start", "100", "--end", "101"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	t.Run("one column is bare command lines", func(t *testing.T) {
+		stdout, _, err := exec(t, "--columns", "cmd")
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if want := "make build\n"; stdout != want {
+			t.Errorf("stdout = %q, want %q", stdout, want)
+		}
+	})
+
+	t.Run("order is the order asked for", func(t *testing.T) {
+		stdout, _, err := exec(t, "--columns", "ret,dur,cwd,cmd")
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if want := "2  1.00  /tmp  make build\n"; stdout != want {
+			t.Errorf("stdout = %q, want %q", stdout, want)
+		}
+	})
+
+	t.Run("unknown column names the ones that work", func(t *testing.T) {
+		_, _, err := exec(t, "--columns", "cmd,nope")
+		if err == nil {
+			t.Fatal("want error, got nil")
+		}
+		if !strings.Contains(err.Error(), `unknown column "nope"`) {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
+// Exit status survives in the listing as the color of the id.
+func TestListingColorsIDByStatus(t *testing.T) {
+	entries := []history.Entry{
+		{ID: 1, Cmd: "ok", Ret: 0, StartAt: time.Unix(100, 0), EndAt: time.Unix(101, 0)},
+		{ID: 2, Cmd: "bad", Ret: 1, StartAt: time.Unix(200, 0), EndAt: time.Unix(201, 0)},
+		{ID: 3, Cmd: "running", StartAt: time.Unix(300, 0)},
+	}
+
+	var buf bytes.Buffer
+	cols, err := entryColumns("id,cmd")
+	if err != nil {
+		t.Fatalf("columns: %v", err)
+	}
+	if err := renderEntries(&buf, entries, cols, "", true); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	want := "\x1b[32m1\x1b[0m  ok\n\x1b[31m2\x1b[0m  bad\n3  running\n"
+	if got := buf.String(); got != want {
+		t.Errorf("rendered %q, want %q", got, want)
+	}
+}
+
+// The ret column carries the same status the id color does, so it is colored
+// the same way.
+func TestListingColorsRetByStatus(t *testing.T) {
+	entries := []history.Entry{
+		{ID: 1, Cmd: "ok", Ret: 0, StartAt: time.Unix(100, 0), EndAt: time.Unix(101, 0)},
+		{ID: 2, Cmd: "bad", Ret: 1, StartAt: time.Unix(200, 0), EndAt: time.Unix(201, 0)},
+		{ID: 3, Cmd: "running", StartAt: time.Unix(300, 0)},
+	}
+
+	var buf bytes.Buffer
+	cols, err := entryColumns("id,ret,cmd")
+	if err != nil {
+		t.Fatalf("columns: %v", err)
+	}
+	if err := renderEntries(&buf, entries, cols, "", true); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	want := "\x1b[32m1\x1b[0m  \x1b[32m0\x1b[0m  ok\n" +
+		"\x1b[31m2\x1b[0m  \x1b[31m1\x1b[0m  bad\n" +
+		"3  -  running\n"
+	if got := buf.String(); got != want {
+		t.Errorf("rendered %q, want %q", got, want)
 	}
 }
 

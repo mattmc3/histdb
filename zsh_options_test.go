@@ -319,13 +319,11 @@ func TestZshWrapperKeepsSubcommands(t *testing.T) {
 
 	// NO_SHARE_HISTORY is what makes the wrapper add a flag at all.
 	out := z.run("unsetopt share_history",
-		"git status\ngit status\n"+settleCmd+"histdb search -F --plain --like 'git%'")
+		"git status\ngit status\n"+settleCmd+"histdb search -F --columns cmd --like 'git%'")
 
+	// One column, so the last line is the command and nothing else.
 	if got, want := strings.TrimSpace(out), "git status"; !strings.HasSuffix(got, want) {
 		t.Errorf("output = %q, want it to end with %q", got, want)
-	}
-	if strings.Contains(out, "time  dur") || strings.Contains(out, "runs  last") {
-		t.Errorf("--plain still printed a table:\n%s", out)
 	}
 }
 

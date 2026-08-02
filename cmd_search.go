@@ -1,14 +1,17 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
-	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/mattmc3/getopt"
 
@@ -34,7 +37,7 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	limit := fs.Define("limit", history.DefaultLimit, "rows to show")
 	byFrequency := fs.Define("sort-by-frequency", false, "most run commands first")
 	preferHere := fs.Define("prefer-here", false, "rank this directory's commands first")
-	plain := fs.Define("plain", false, "print command lines only")
+	columns := fs.Define("columns", "", "comma separated columns to print")
 	fs.Aliases(
 		"h", "help",
 		"v", "version",
@@ -119,62 +122,182 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	defer store.Close()
 
-	// Ranking by frequency collapses runs into one row per command, so there is
-	// no single time, directory or exit status left to show.
+	// Ranking by frequency collapses runs into one row per command, so it has
+	// columns of its own: there is no single time or exit status left to show.
 	if *byFrequency {
+		cols, err := freqColumns(cmp.Or(*columns, defaultFreqColumns))
+		if err != nil {
+			return err
+		}
 		frequent, err := store.Entries().MostFrequent(ctx, filter)
 		if err != nil {
 			return err
 		}
-		return renderFrequent(stdout, frequent, *plain)
+		return renderFrequent(stdout, frequent, cols)
 	}
 
+	cols, err := entryColumns(cmp.Or(*columns, defaultColumns))
+	if err != nil {
+		return err
+	}
 	entries, err := store.Entries().Search(ctx, filter)
 	if err != nil {
 		return err
 	}
-	return renderEntries(stdout, entries, *plain)
+	return renderEntries(stdout, entries, cols, os.Getenv("HISTDB_SESSION"), useColor(stdout))
 }
 
-func renderEntries(w io.Writer, entries []history.Entry, plain bool) error {
-	if plain {
-		for _, e := range entries {
-			fmt.Fprintln(w, e.Cmd)
-		}
-		return nil
-	}
+// The listing is `fc -li`: no header, one row per command, columns padded to
+// the widest cell in the set. Times are stored UTC and shown local.
+const (
+	defaultColumns     = "id,time,cmd"
+	defaultFreqColumns = "runs,last,cmd"
+	timeFormat         = "2006-01-02 15:04"
+)
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "time\tdur\tret\tcwd\tcmd")
-	for _, e := range entries {
-		dur, ret := "-", "-"
-		if e.Finished() {
-			dur = fmt.Sprintf("%.2f", e.Duration().Seconds())
-			ret = fmt.Sprint(e.Ret)
-		}
-		// Stored UTC, shown in the shell's own timezone.
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			e.StartAt.Local().Format("2006-01-02 15:04:05"),
-			dur, ret, shortenHome(e.Cwd), e.Cmd)
-	}
-	return tw.Flush()
+// A column of the listing. right-aligns the numeric ones, the way fc lines up
+// its ids.
+type column[T any] struct {
+	name  string
+	right bool
+	cell  func(T) string
 }
 
-func renderFrequent(w io.Writer, frequent []history.Frequent, plain bool) error {
-	if plain {
-		for _, c := range frequent {
-			fmt.Fprintln(w, c.Cmd)
+var entryColumnSet = []column[history.Entry]{
+	{"id", true, func(e history.Entry) string { return strconv.FormatInt(e.ID, 10) }},
+	{"time", false, func(e history.Entry) string { return e.StartAt.Local().Format(timeFormat) }},
+	{"dur", true, func(e history.Entry) string {
+		if !e.Finished() {
+			return "-"
 		}
-		return nil
+		return fmt.Sprintf("%.2f", e.Duration().Seconds())
+	}},
+	{"ret", true, func(e history.Entry) string {
+		if !e.Finished() {
+			return "-"
+		}
+		return strconv.Itoa(e.Ret)
+	}},
+	{"cwd", false, func(e history.Entry) string { return shortenHome(e.Cwd) }},
+	{"session", false, func(e history.Entry) string { return e.Session.Key }},
+	{"cmd", false, func(e history.Entry) string { return e.Cmd }},
+}
+
+var freqColumnSet = []column[history.Frequent]{
+	{"runs", true, func(f history.Frequent) string { return strconv.Itoa(f.Count) }},
+	{"last", false, func(f history.Frequent) string { return f.LastAt.Local().Format(timeFormat) }},
+	{"cmd", false, func(f history.Frequent) string { return f.Cmd }},
+}
+
+func entryColumns(spec string) ([]column[history.Entry], error) {
+	return pickColumns(spec, entryColumnSet)
+}
+
+func freqColumns(spec string) ([]column[history.Frequent], error) {
+	return pickColumns(spec, freqColumnSet)
+}
+
+func pickColumns[T any](spec string, set []column[T]) ([]column[T], error) {
+	var picked []column[T]
+	for _, name := range strings.Split(spec, ",") {
+		name = strings.TrimSpace(name)
+		i := slices.IndexFunc(set, func(c column[T]) bool { return c.name == name })
+		if i < 0 {
+			names := make([]string, len(set))
+			for j, c := range set {
+				names[j] = c.name
+			}
+			return nil, fmt.Errorf("unknown column %q, want one of: %s",
+				name, strings.Join(names, ", "))
+		}
+		picked = append(picked, set[i])
+	}
+	return picked, nil
+}
+
+func renderEntries(w io.Writer, entries []history.Entry, cols []column[history.Entry], session string, color bool) error {
+	// Exit status shows as a color on the two columns that stand for it, and
+	// the id also carries zsh's star for a command from another session.
+	decorate := func(name, cell string, e history.Entry) string {
+		if color && e.Finished() && (name == "id" || name == "ret") {
+			code := "31"
+			if e.Ret == 0 {
+				code = "32"
+			}
+			cell = "\x1b[" + code + "m" + cell + "\x1b[0m"
+		}
+		if name != "id" {
+			return cell
+		}
+		if session != "" && e.Session.Key != session {
+			return cell + "*"
+		}
+		return cell + " "
+	}
+	return render(w, entries, cols, decorate)
+}
+
+func renderFrequent(w io.Writer, frequent []history.Frequent, cols []column[history.Frequent]) error {
+	return render(w, frequent, cols, nil)
+}
+
+// render lays the rows out in fixed-width columns. decorate, when given, marks
+// cells up after they are padded, so the marks cannot skew widths.
+func render[T any](w io.Writer, rows []T, cols []column[T], decorate func(string, string, T) string) error {
+	cells := make([][]string, len(rows))
+	widths := make([]int, len(cols))
+	for i, row := range rows {
+		cells[i] = make([]string, len(cols))
+		for j, c := range cols {
+			cells[i][j] = c.cell(row)
+			widths[j] = max(widths[j], utf8.RuneCountInString(cells[i][j]))
+		}
 	}
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "runs\tlast\tcmd")
-	for _, c := range frequent {
-		fmt.Fprintf(tw, "%d\t%s\t%s\n",
-			c.Count, c.LastAt.Local().Format("2006-01-02 15:04:05"), c.Cmd)
+	var line strings.Builder
+	for i, row := range rows {
+		line.Reset()
+		for j, c := range cols {
+			cell := pad(cells[i][j], widths[j], c.right)
+			sep := "  "
+			if decorate != nil {
+				cell = decorate(c.name, cell, row)
+				// The star takes one of the two spaces after the id.
+				if c.name == "id" {
+					sep = " "
+				}
+			}
+			line.WriteString(cell)
+			if j < len(cols)-1 {
+				line.WriteString(sep)
+			}
+		}
+		if _, err := fmt.Fprintln(w, strings.TrimRight(line.String(), " ")); err != nil {
+			return err
+		}
 	}
-	return tw.Flush()
+	return nil
+}
+
+func pad(s string, width int, right bool) string {
+	fill := strings.Repeat(" ", max(0, width-utf8.RuneCountInString(s)))
+	if right {
+		return fill + s
+	}
+	return s + fill
+}
+
+// Color is for a terminal to read, not for whatever a pipe leads to.
+func useColor(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func shortenHome(path string) string {

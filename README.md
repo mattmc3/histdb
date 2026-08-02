@@ -54,7 +54,7 @@ Long forms: `--here`, `--repo`, `--fail`, `--success`, `--session`, `--head`,
 ## Ranking by frequency
 
 `-F` collapses runs into one row per command, most run first. Since a command
-that ran many times has no single time, directory or exit status, the table
+that ran many times has no single time, directory or exit status, the listing
 shows run count and last use instead.
 
 ```sh
@@ -64,7 +64,27 @@ histdb -F --prefer-here       # rank this directory's commands first
 histdb -F -d                  # only this directory
 ```
 
-`--plain` prints bare command lines with no table, for feeding other tools.
+## Output
+
+The listing is `fc -li`: id, time, command, no header. A star on the id means
+the command came from another shell session, the way zsh marks them under
+`SHARE_HISTORY`. On a terminal the id, and the `ret` column when asked for,
+are green when the command succeeded and red when it failed. `NO_COLOR` turns
+that off.
+
+```
+10023  2026-08-02 17:36  histdb
+10025* 2026-08-02 17:36  setopt share_history
+```
+
+`--columns` picks the fields and their order: `id`, `time`, `dur`, `ret`,
+`cwd`, `session`, `cmd`, or with `-F`, `runs`, `last`, `cmd`.
+
+```sh
+histdb --columns cmd            # bare command lines, for feeding other tools
+histdb --columns id,time,cwd,cmd
+histdb -F --columns runs,cmd
+```
 
 ## Matching
 
@@ -98,7 +118,7 @@ _zsh_autosuggest_strategy_histdb() {
   local q=${1//\\/\\\\}
   q=${q//\%/\\%}
   q=${q//_/\\_}
-  suggestion=$(histdb -F --prefer-here --plain -n 1 --like "$q%")
+  suggestion=$(histdb -F --prefer-here --columns cmd -n 1 --like "$q%")
 }
 ZSH_AUTOSUGGEST_STRATEGY=(histdb)
 ```
