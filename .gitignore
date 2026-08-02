@@ -1,0 +1,15 @@
+~*
+
+# Ignore all hidden dotfiles unless explicitly unignored.
+.*
+!.editorconfig
+!.gitattributes
+!.gitignore
+!.github/
+
+# Build output
+bin/
+histdb
+
+# SQLite databases
+*.db*

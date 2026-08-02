@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          # setup-go reads "go 1.27rc2" from go.mod as "1.27", so the rc is
+          # pinned here. Back to go-version-file once 1.27 is stable.
+          go-version: '1.27.0-rc.2'
+      - run: go vet ./...
+      - run: go test ./...
+      - name: check formatting
+        run: test -z "$(gofmt -l .)"
