@@ -18,15 +18,17 @@ usage:
   histdb record [options]      record one command, called by the shell hooks
 
 search options:
-  -d, --here       only commands run in this directory
-  -r, --repo       only commands run anywhere in this repository
-  -f, --fail       only commands that failed
-  -s, --success    only commands that succeeded
-  -S, --session    only commands from this shell session
-      --like P     match commands against a SQL LIKE pattern
-  -H, --head       oldest matches instead of newest
-  -n, --limit N    rows to show (default 20)
-      --no-dups    only the newest run of each command
+  -d, --here          only commands run in this directory
+  -r, --repo          only commands run anywhere in this repository
+  -s, --session       only commands from this shell session
+  -S, --all-sessions  commands from every shell session
+      --like P        match commands against a SQL LIKE pattern
+  -H, --head          oldest matches instead of newest
+  -n, --limit N       rows to show (default 20)
+      --no-dups       only the newest run of each command
+
+With neither -s nor -S, the zsh wrapper decides: SHARE_HISTORY shows every
+session, NO_SHARE_HISTORY only this one. -S overrides it either way.
 
 ranking:
   -F, --sort-by-frequency   most run commands first, one row per command

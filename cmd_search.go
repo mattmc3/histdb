@@ -29,9 +29,8 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	here := fs.Define("here", false, "only commands run in this directory")
 	repo := fs.Define("repo", false, "only commands run anywhere in this repository")
 	unique := fs.Define("no-dups", false, "only the newest run of each command")
-	failed := fs.Define("fail", false, "only commands that failed")
-	succeeded := fs.Define("success", false, "only commands that succeeded")
 	thisSession := fs.Define("session", false, "only commands from this shell session")
+	allSessions := fs.Define("all-sessions", false, "commands from every shell session")
 	like := fs.Define("like", "", "SQL LIKE pattern, wildcards as written")
 	head := fs.Define("head", false, "oldest matches instead of newest")
 	limit := fs.Define("limit", history.DefaultLimit, "rows to show")
@@ -43,9 +42,8 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		"v", "version",
 		"d", "here",
 		"r", "repo",
-		"f", "fail",
-		"s", "success",
-		"S", "session",
+		"s", "session",
+		"S", "all-sessions",
 		"H", "head",
 		"n", "limit",
 		"F", "sort-by-frequency",
@@ -63,8 +61,6 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	case *showVersion:
 		fmt.Fprintf(stdout, "histdb %s\n", version)
 		return nil
-	case *failed && *succeeded:
-		return errors.New("--fail and --success are mutually exclusive")
 	case *head && *byFrequency:
 		return errors.New("--head and --sort-by-frequency are mutually exclusive")
 	case *preferHere && !*byFrequency:
@@ -83,12 +79,6 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		Unique:            *unique,
 		CurrentSessionKey: os.Getenv("HISTDB_SESSION"),
 	}
-	switch {
-	case *failed:
-		filter.Status = history.Failed
-	case *succeeded:
-		filter.Status = history.Succeeded
-	}
 	if *here || *repo || *preferHere {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -105,7 +95,9 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 			}
 		}
 	}
-	if *thisSession {
+	// The wrapper passes --session for you when SHARE_HISTORY is off, so an
+	// --all-sessions on the command line is the caller overriding it.
+	if *thisSession && !*allSessions {
 		filter.SessionKey = os.Getenv("HISTDB_SESSION")
 		if filter.SessionKey == "" {
 			return errors.New("--session: HISTDB_SESSION is not set")

@@ -168,15 +168,60 @@ func TestRecordThenSearch(t *testing.T) {
 	if !strings.Contains(stdout, "git status") || !strings.Contains(stdout, "make build") {
 		t.Fatalf("search output = %q, want both commands", stdout)
 	}
-	stdout, _, err = exec(t, "--fail")
-	if err != nil {
-		t.Fatalf("search --fail: %v", err)
+}
+
+// Scope is -s for this session and -S for every session. With neither, the
+// zsh wrapper decides by passing -s or not, per SHARE_HISTORY.
+func TestSearchSessionScope(t *testing.T) {
+	useTempDB(t)
+
+	if _, _, err := exec(t, "record", "--cmd", "mine", "--ret", "0",
+		"--start", "100", "--end", "101"); err != nil {
+		t.Fatalf("record: %v", err)
 	}
-	if strings.Contains(stdout, "git status") {
-		t.Errorf("--fail returned a successful command: %q", stdout)
+	if _, _, err := exec(t, "record", "--session", "elsewhere", "--cmd", "theirs",
+		"--ret", "0", "--start", "200", "--end", "201"); err != nil {
+		t.Fatalf("record: %v", err)
 	}
-	if !strings.Contains(stdout, "make build") {
-		t.Errorf("--fail missing failed command: %q", stdout)
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no flag takes every session", nil, "mine\ntheirs\n"},
+		{"-s is this session", []string{"-s"}, "mine\n"},
+		{"-S is every session", []string{"-S"}, "mine\ntheirs\n"},
+		// The -s is the wrapper's doing, the -S is the caller's.
+		{"-S wins over -s", []string{"-s", "-S"}, "mine\ntheirs\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, err := exec(t, append(tc.args, "--columns", "cmd")...)
+			if err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			if stdout != tc.want {
+				t.Errorf("stdout = %q, want %q", stdout, tc.want)
+			}
+		})
+	}
+}
+
+// --fail and --success are gone until --where can express them.
+func TestSearchHasNoStatusFlags(t *testing.T) {
+	useTempDB(t)
+
+	// A database, so a missing one cannot be what fails instead.
+	if _, _, err := exec(t, "record", "--cmd", "ls", "--ret", "1",
+		"--start", "100", "--end", "101"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	for _, arg := range []string{"-f", "--fail", "--success"} {
+		if _, _, err := exec(t, arg); err == nil {
+			t.Errorf("%s: want error, got nil", arg)
+		}
 	}
 }
 
@@ -661,50 +706,16 @@ func TestRecordRequiresCmd(t *testing.T) {
 	}
 }
 
-func TestFailAndSuccessConflict(t *testing.T) {
-	useTempDB(t)
-
-	_, _, err := exec(t, "-f", "-s")
-	if err == nil {
-		t.Fatal("want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("err = %v", err)
-	}
-}
-
 func TestSessionFlagNeedsSession(t *testing.T) {
 	useTempDB(t)
 	t.Setenv("HISTDB_SESSION", "")
 
-	_, _, err := exec(t, "-S")
+	_, _, err := exec(t, "-s")
 	if err == nil {
 		t.Fatal("want error, got nil")
 	}
 	if !strings.Contains(err.Error(), "HISTDB_SESSION is not set") {
 		t.Errorf("err = %v", err)
-	}
-}
-
-func TestSessionFilter(t *testing.T) {
-	useTempDB(t)
-	t.Setenv("HISTDB_SESSION", "session-a")
-
-	if _, _, err := exec(t, "record", "--cmd", "mine", "--session", "session-a",
-		"--ret", "0", "--start", "1", "--end", "2"); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	if _, _, err := exec(t, "record", "--cmd", "theirs", "--session", "session-b",
-		"--ret", "0", "--start", "3", "--end", "4"); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-
-	stdout, _, err := exec(t, "-S")
-	if err != nil {
-		t.Fatalf("search: %v", err)
-	}
-	if !strings.Contains(stdout, "mine") || strings.Contains(stdout, "theirs") {
-		t.Errorf("output = %q, want only this session", stdout)
 	}
 }
 

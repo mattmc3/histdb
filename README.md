@@ -34,16 +34,19 @@ histdb --like '%git%' # commands containing "git"
 histdb --like 'git%'  # commands starting with "git"
 histdb -d             # only this directory
 histdb -r             # this directory and the rest of its repository
-histdb -f             # only commands that failed
-histdb -s             # only commands that succeeded
-histdb -S             # only this shell session
+histdb -s             # only this shell session
+histdb -S             # every shell session
 histdb -H             # oldest matches instead of newest
 histdb -n 100         # more rows
 histdb --no-dups      # only the newest run of each command
 ```
 
-Long forms: `--here`, `--repo`, `--fail`, `--success`, `--session`, `--head`,
+Long forms: `--here`, `--repo`, `--session`, `--all-sessions`, `--head`,
 `--limit`. Outside a checkout, `-r` behaves like `-d`.
+
+With neither `-s` nor `-S`, the scope is whatever `SHARE_HISTORY` says, since
+the zsh wrapper passes `--session` for you when it is off. `-S` overrides that,
+so it is how you reach other sessions under `NO_SHARE_HISTORY`.
 
 | variable         | meaning                                                  |
 | ---------------- | -------------------------------------------------------- |
@@ -138,7 +141,7 @@ no fallback.
 | `HIST_IGNORE_DUPS`   | a command identical to the previous one is not recorded |
 | `HIST_NO_FUNCTIONS`  | function definitions are not recorded                   |
 | `HIST_NO_STORE`      | `history` and `fc` are not recorded                     |
-| `SHARE_HISTORY`      | when off, searches are limited to the current session   |
+| `SHARE_HISTORY`      | when off, searches are limited to the current session, unless you pass `-S` |
 | `HIST_FIND_NO_DUPS`  | searches show each command once, its newest run         |
 
 Deliberately ignored, and why:

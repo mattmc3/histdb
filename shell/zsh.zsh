@@ -116,7 +116,8 @@ histdb() {
     search) sub=$1; shift ;;
   esac
 
-  # NO_SHARE_HISTORY means other shells' commands are not yours to see.
+  # NO_SHARE_HISTORY means other shells' commands are not available to see, until
+  # you ask for them with -S.
   [[ $share == off ]] && opts+=(--session)
   [[ $find_no_dups == on ]] && opts+=(--no-dups)
 

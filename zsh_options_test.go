@@ -350,3 +350,17 @@ func TestZshIncAppendHistoryTimeIsIgnored(t *testing.T) {
 
 	z.assertRecorded("echo kept")
 }
+
+// -S is how you see other sessions when NO_SHARE_HISTORY has the wrapper
+// passing --session for you.
+func TestZshAllSessionsOverridesShareHistory(t *testing.T) {
+	z := newZshShell(t)
+	z.seed("another-shell", "from another shell", 100)
+
+	out := z.run("unsetopt share_history",
+		"echo mine\n"+settleCmd+"histdb -S --columns cmd")
+
+	if !strings.Contains(out, "from another shell") {
+		t.Errorf("-S missing the other session's command:\n%s", out)
+	}
+}
