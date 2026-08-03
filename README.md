@@ -135,6 +135,9 @@ histdb --columns id,time,cwd,cmd
 histdb -F --columns runs,cmd
 ```
 
+A table that fills its active row limit writes a notice to stderr naming `-n`,
+so pipes reading stdout do not get an extra row.
+
 `--jsonl` writes one JSON object per line, every column and every match unless
 `--columns` or `-n` narrows it:
 

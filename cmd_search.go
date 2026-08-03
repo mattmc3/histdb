@@ -162,7 +162,10 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		if *jsonl {
 			return renderJSONL(stdout, frequent, cols)
 		}
-		return renderFrequent(stdout, frequent, cols)
+		if err := renderFrequent(stdout, frequent, cols); err != nil {
+			return err
+		}
+		return warnLimit(stderr, len(frequent), filter.Limit)
 	}
 
 	spec := cmp.Or(*columns, defaultColumns)
@@ -180,7 +183,10 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if *jsonl {
 		return renderJSONL(stdout, entries, cols)
 	}
-	return renderEntries(stdout, entries, cols, os.Getenv("HISTDB_SESSION"), useColor(stdout))
+	if err := renderEntries(stdout, entries, cols, os.Getenv("HISTDB_SESSION"), useColor(stdout)); err != nil {
+		return err
+	}
+	return warnLimit(stderr, len(entries), filter.Limit)
 }
 
 // The listing is `fc -li`: no header, one row per command, columns padded to
@@ -389,6 +395,14 @@ func renderEntries(w io.Writer, entries []history.Entry, cols []column[history.E
 
 func renderFrequent(w io.Writer, frequent []history.Frequent, cols []column[history.Frequent]) error {
 	return render(w, frequent, cols, nil)
+}
+
+func warnLimit(w io.Writer, rows, limit int) error {
+	if limit <= 0 || rows < limit {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "(limit: %d rows; change with -n <N>)\n", limit)
+	return err
 }
 
 // render lays the rows out in fixed-width columns. decorate, when given, marks

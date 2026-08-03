@@ -809,25 +809,40 @@ func TestSearchLimit(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
-		args []string
-		want int
+		name       string
+		args       []string
+		wantRows   int
+		wantStderr string
 	}{
-		{"table stops at the default", []string{"--columns", "cmd"}, 20},
-		{"-n 0 is everything", []string{"-n", "0", "--columns", "cmd"}, 25},
-		{"-n counts", []string{"-n", "5", "--columns", "cmd"}, 5},
-		{"jsonl is everything", []string{"--jsonl"}, 25},
-		{"jsonl still takes -n", []string{"--jsonl", "-n", "5"}, 5},
-		{"ranking takes -n 0", []string{"-F", "-n", "0", "--columns", "cmd"}, 25},
+		{"table stops at the default",
+			[]string{"--columns", "cmd"}, 20,
+			"(limit: 20 rows; change with -n <N>)\n"},
+		{"-n 0 is everything",
+			[]string{"-n", "0", "--columns", "cmd"}, 25, ""},
+		{"-n counts",
+			[]string{"-n", "5", "--columns", "cmd"}, 5,
+			"(limit: 5 rows; change with -n <N>)\n"},
+		{"jsonl is everything",
+			[]string{"--jsonl"}, 25, ""},
+		{"jsonl still takes -n",
+			[]string{"--jsonl", "-n", "5"}, 5, ""},
+		{"ranking warns when limited",
+			[]string{"-F", "-n", "5", "--columns", "cmd"}, 5,
+			"(limit: 5 rows; change with -n <N>)\n"},
+		{"ranking takes -n 0",
+			[]string{"-F", "-n", "0", "--columns", "cmd"}, 25, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stdout, _, err := exec(t, tc.args...)
+			stdout, stderr, err := exec(t, tc.args...)
 			if err != nil {
 				t.Fatalf("search: %v", err)
 			}
-			if got := strings.Count(stdout, "\n"); got != tc.want {
-				t.Errorf("got %d rows, want %d", got, tc.want)
+			if got := strings.Count(stdout, "\n"); got != tc.wantRows {
+				t.Errorf("got %d rows, want %d", got, tc.wantRows)
+			}
+			if stderr != tc.wantStderr {
+				t.Errorf("stderr = %q, want %q", stderr, tc.wantStderr)
 			}
 		})
 	}

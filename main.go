@@ -63,6 +63,8 @@ output:
                    a command that has not finished has null dur and ret, and
                    a newline inside a command stays inside its string
 
+A table that fills its active row limit writes a stderr notice naming -n.
+
   -h, --help       print this help
   -v, --version    print version
 
