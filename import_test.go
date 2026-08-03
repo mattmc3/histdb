@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mattmc3/histdb/internal/history"
 )
 
 // What zsh writes with EXTENDED_HISTORY: a header of start time and elapsed
@@ -217,6 +220,33 @@ func TestImportFormatFlag(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
+}
+
+// The session records the host the way the hooks do, short of its domain.
+func TestImportRecordsShortHostname(t *testing.T) {
+	db := useTempDB(t)
+	path := writeHistfile(t, ": 1700000000:0;echo one\n")
+
+	if _, _, err := exec(t, "import", "zsh", path); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	store, err := history.Open(context.Background(), db)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+
+	entries, err := store.Entries().Search(context.Background(), history.Filter{Limit: 10})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("stored %d entries, want 1", len(entries))
+	}
+	if got, want := entries[0].Session.Host, shortHostname(); got != want {
+		t.Errorf("host = %q, want %q", got, want)
+	}
 }
 
 func TestImportUnsupportedShell(t *testing.T) {

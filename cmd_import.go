@@ -98,9 +98,10 @@ func runImport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 	// One session per file, so importing it again lands on the same rows
 	// rather than a second copy of them.
-	session := history.Session{Key: "import:" + shell + ":" + path, Shell: shell}
-	if host, err := os.Hostname(); err == nil {
-		session.Host = host
+	session := history.Session{
+		Key:   "import:" + shell + ":" + path,
+		Shell: shell,
+		Host:  shortHostname(),
 	}
 	if who, err := user.Current(); err == nil {
 		session.User = who.Username
