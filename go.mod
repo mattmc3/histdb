@@ -4,7 +4,7 @@ go 1.27rc2
 
 require (
 	github.com/mattmc3/getopt v0.0.0-20260802173412-1473941ec60b
-	github.com/mattmc3/go-approxidate v0.0.0
+	github.com/mattmc3/go-approxidate v0.0.0-20260803144344-b63dd4845d8e
 	modernc.org/sqlite v1.55.0
 )
 
@@ -19,5 +19,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/mattmc3/go-approxidate => ../go-approxidate
