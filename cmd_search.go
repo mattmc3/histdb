@@ -35,6 +35,8 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	thisSession := fs.Define("session", false, "only commands from this shell session")
 	allSessions := fs.Define("all-sessions", false, "commands from every shell session")
 	like := fs.Define("like", "", "SQL LIKE pattern, wildcards as written")
+	since := fs.Define("since", "", "only commands started at or after this time")
+	until := fs.Define("until", "", "only commands started before this time")
 	head := fs.Define("head", false, "oldest matches instead of newest")
 	limit := fs.Define("limit", history.DefaultLimit, "rows to show, 0 for every match")
 	byFrequency := fs.Define("sort-by-frequency", false, "most run commands first")
@@ -82,6 +84,28 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		Limit:             rowLimit(fs, *limit, *jsonl),
 		Unique:            *unique,
 		CurrentSessionKey: os.Getenv("HISTDB_SESSION"),
+	}
+
+	now := time.Now()
+	if *since != "" {
+		at, err := rangeStart(*since, now)
+		if err != nil {
+			return fmt.Errorf("--since: %w", err)
+		}
+		filter.Since = at
+	}
+	if *until != "" {
+		at, err := rangeEnd(*until, now)
+		if err != nil {
+			return fmt.Errorf("--until: %w", err)
+		}
+		filter.Until = at
+	}
+	// An empty answer would be a fair reading of a backwards range, but it is
+	// never what was meant.
+	if !filter.Since.IsZero() && !filter.Until.IsZero() && !filter.Since.Before(filter.Until) {
+		return fmt.Errorf("--since %s is not before --until %s",
+			filter.Since.Format(time.RFC3339), filter.Until.Format(time.RFC3339))
 	}
 	if *here || *repo || *preferHere {
 		wd, err := os.Getwd()

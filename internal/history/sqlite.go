@@ -430,6 +430,14 @@ func (f Filter) where() (string, []any) {
 		conditions = append(conditions, "h.vcs_root = ?")
 		args = append(args, f.VCSRoot)
 	}
+	if !f.Since.IsZero() {
+		conditions = append(conditions, "h.start_at >= ?")
+		args = append(args, epochOf(f.Since))
+	}
+	if !f.Until.IsZero() {
+		conditions = append(conditions, "h.start_at < ?")
+		args = append(args, epochOf(f.Until))
+	}
 	if f.SessionKey != "" {
 		conditions = append(conditions, "s.session_key = ?")
 		args = append(args, f.SessionKey)

@@ -29,16 +29,18 @@ Bare `histdb` lists the last 20 commands, oldest first. Matching is always an
 explicit `--like` pattern.
 
 ```sh
-histdb                # recent commands
-histdb --like '%git%' # commands containing "git"
-histdb --like 'git%'  # commands starting with "git"
-histdb -d             # only this directory
-histdb -r             # this directory and the rest of its repository
-histdb -s             # only this shell session
-histdb -S             # every shell session
-histdb -H             # oldest matches instead of newest
-histdb -n 100         # more rows
-histdb --no-dups      # only the newest run of each command
+histdb                      # recent commands
+histdb --like '%git%'       # commands containing "git"
+histdb --like 'git%'        # commands starting with "git"
+histdb -d                   # only this directory
+histdb -r                   # this directory and the rest of its repository
+histdb --since yesterday    # since yesterday midnight
+histdb --until "last week"  # up to a week ago
+histdb -s                   # only this shell session
+histdb -S                   # every shell session
+histdb -H                   # oldest matches instead of newest
+histdb -n 100               # more rows
+histdb --no-dups            # only the newest run of each command
 ```
 
 Long forms: `--here`, `--repo`, `--session`, `--all-sessions`, `--head`,
@@ -48,11 +50,11 @@ With neither `-s` nor `-S`, the scope is whatever `SHARE_HISTORY` says, since
 the zsh wrapper passes `--session` for you when it is off. `-S` overrides that,
 so it is how you reach other sessions under `NO_SHARE_HISTORY`.
 
-| variable         | meaning                                                  |
-| ---------------- | -------------------------------------------------------- |
+| variable         | meaning                                                                             |
+| ---------------- | ----------------------------------------------------------------------------------- |
 | `HISTDB_FILE`    | database path, exported by `histdb init`, default `$XDG_DATA_HOME/histdb/histdb.db` |
-| `HISTDB_SESSION` | session key, set by the shell integration                |
-| `HISTDB_BIN`     | binary the hooks call, pinned by `histdb init`           |
+| `HISTDB_SESSION` | session key, set by the shell integration                                           |
+| `HISTDB_BIN`     | binary the hooks call, pinned by `histdb init`                                      |
 
 ## Ranking by frequency
 
@@ -66,6 +68,49 @@ histdb -F --like 'git%'       # most run, starting with "git"
 histdb -F --prefer-here       # rank this directory's commands first
 histdb -F -d                  # only this directory
 ```
+
+## Time ranges
+
+`--since` is inclusive, `--until` is not. Both take the same vocabulary:
+
+| form                     | example                                                     |
+| ------------------------ | ----------------------------------------------------------- |
+| a date                   | `2026-01-15`                                                |
+| a date and time          | `"2026-01-15 09:30"`, `2026-01-15T09:30`, RFC3339           |
+| a keyword                | `now`, `today`, `yesterday`                                 |
+| a duration back from now | `2h`, `90m`, `45s`                                          |
+| a count of units back    | `"3 days ago"`, `3.days.ago`, `"2 weeks ago"`, `last month` |
+| counts that add up       | `"1 year 2 months ago"`, `"3 days 2 hours ago"`             |
+| a weekday                | `friday`, `fri`, `"last friday"`                            |
+| a month and day          | `"december 25th"`, `"dec 25"`, `"3 march"`                  |
+| a time of day            | `10am`, `5pm`, `9:15`, `17:30`, `noon`, `midnight`          |
+| unix epoch               | `@1700000000`                                               |
+
+Every relative form means the most recent one at or before now, which is where
+history is. `friday` is the Friday just gone, today included if today is a
+Friday, where `"last friday"` always goes back a further week. `"dec 25"` in
+January is last December. `5pm` is today's, or yesterday's when 5pm has not
+come round yet.
+
+The vocabulary is English only. Anything it cannot read is an error listing
+what it takes, rather than a silent fall back to the current time and an empty
+listing you have to explain to yourself.
+
+Ambiguous numeric dates are refused on purpose: `01/15/2026` and `15.01.2026`
+tell nobody but their writer whether `01/02` is January 2nd. Write the date
+out and there is nothing left to guess at.
+
+A day named without a time of day runs midnight to midnight, so the same date
+on both sides is that whole day:
+
+```sh
+histdb --since 2026-01-15 --until 2026-01-15   # everything that day
+histdb --since yesterday                       # since yesterday midnight
+histdb -F --since "2 weeks ago"                # what you have run lately
+```
+
+Naming a day means the whole day. Nothing quietly fills the hour in from the
+current clock and drops the morning of the day you asked for.
 
 ## Output
 
@@ -99,7 +144,19 @@ histdb --jsonl -n 100 | jq -r 'select(.host == "box") | .cmd'
 ```
 
 ```json
-{"id":1,"time":"2026-08-03T07:31:20-05:00","dur":0.5,"ret":0,"cwd":"/tmp","session":"1000.4242.1","shell":"zsh","host":"box","user":"someone","tty":"ttys009","cmd":"git status"}
+{
+    "id": 1,
+    "time": "2026-08-03T07:31:20-05:00",
+    "dur": 0.5,
+    "ret": 0,
+    "cwd": "/tmp",
+    "session": "1000.4242.1",
+    "shell": "zsh",
+    "host": "box",
+    "user": "someone",
+    "tty": "ttys009",
+    "cmd": "git status"
+}
 ```
 
 Times are RFC3339, a command that has not finished yet has `null` for `dur`
@@ -176,15 +233,15 @@ no fallback.
 `histdb init zsh` installs the hooks and a small `histdb` function that reads
 `$options` on every call, so a `setopt` mid-session takes effect immediately.
 
-| option               | effect                                                  |
-| -------------------- | ------------------------------------------------------- |
-| `HIST_IGNORE_SPACE`  | a command starting with a space is not recorded         |
-| `HIST_REDUCE_BLANKS` | runs of whitespace are squeezed before recording        |
-| `HIST_IGNORE_DUPS`   | a command identical to the previous one is not recorded |
-| `HIST_NO_FUNCTIONS`  | function definitions are not recorded                   |
-| `HIST_NO_STORE`      | `history` and `fc` are not recorded                     |
+| option               | effect                                                                      |
+| -------------------- | --------------------------------------------------------------------------- |
+| `HIST_IGNORE_SPACE`  | a command starting with a space is not recorded                             |
+| `HIST_REDUCE_BLANKS` | runs of whitespace are squeezed before recording                            |
+| `HIST_IGNORE_DUPS`   | a command identical to the previous one is not recorded                     |
+| `HIST_NO_FUNCTIONS`  | function definitions are not recorded                                       |
+| `HIST_NO_STORE`      | `history` and `fc` are not recorded                                         |
 | `SHARE_HISTORY`      | when off, searches are limited to the current session, unless you pass `-S` |
-| `HIST_FIND_NO_DUPS`  | searches show each command once, its newest run         |
+| `HIST_FIND_NO_DUPS`  | searches show each command once, its newest run                             |
 
 Deliberately ignored, and why:
 

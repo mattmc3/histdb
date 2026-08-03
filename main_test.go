@@ -33,6 +33,11 @@ func useTempDB(t *testing.T) string {
 	return path
 }
 
+// at is a local wall clock time, for putting a record at a known moment.
+func at(year int, month time.Month, day, hour, minute int) time.Time {
+	return time.Date(year, month, day, hour, minute, 0, 0, time.Local)
+}
+
 func TestVersionFlags(t *testing.T) {
 	for _, arg := range []string{"-v", "--version"} {
 		stdout, _, err := exec(t, arg)
@@ -825,6 +830,115 @@ func TestSearchLimit(t *testing.T) {
 				t.Errorf("got %d rows, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// A range runs midnight to midnight when neither end names a time, so one
+// date on both sides is that whole day.
+func TestSearchSinceUntil(t *testing.T) {
+	useTempDB(t)
+
+	moments := []struct {
+		cmd string
+		at  time.Time
+	}{
+		{"before", at(2026, 1, 14, 12, 0)},
+		{"morning", at(2026, 1, 15, 9, 0)},
+		{"late", at(2026, 1, 15, 23, 30)},
+		{"after", at(2026, 1, 16, 8, 0)},
+	}
+	for _, m := range moments {
+		start := fmt.Sprint(m.at.Unix())
+		if _, _, err := exec(t, "record", "--cmd", m.cmd, "--ret", "0",
+			"--start", start, "--end", start); err != nil {
+			t.Fatalf("record %q: %v", m.cmd, err)
+		}
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"one date is that whole day",
+			[]string{"--since", "2026-01-15", "--until", "2026-01-15"}, "morning\nlate\n"},
+		{"since is inclusive from midnight",
+			[]string{"--since", "2026-01-15"}, "morning\nlate\nafter\n"},
+		{"until covers the day it names",
+			[]string{"--until", "2026-01-15"}, "before\nmorning\nlate\n"},
+		{"a time of day is taken as given",
+			[]string{"--since", "2026-01-15 10:00"}, "late\nafter\n"},
+		{"a span covers both days named",
+			[]string{"--since", "2026-01-14", "--until", "2026-01-15"}, "before\nmorning\nlate\n"},
+		{"the far end includes the day it names",
+			[]string{"--since", "2026-01-14", "--until", "2026-01-16"}, "before\nmorning\nlate\nafter\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, err := exec(t, append(tc.args, "--columns", "cmd")...)
+			if err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			if stdout != tc.want {
+				t.Errorf("stdout = %q, want %q", stdout, tc.want)
+			}
+		})
+	}
+}
+
+func TestSearchSinceUntilErrors(t *testing.T) {
+	useTempDB(t)
+
+	if _, _, err := exec(t, "record", "--cmd", "ls", "--ret", "0",
+		"--start", "100", "--end", "101"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	t.Run("unreadable time names the flag", func(t *testing.T) {
+		_, _, err := exec(t, "--since", "tea time")
+		if err == nil {
+			t.Fatal("want error, got nil")
+		}
+		if !strings.Contains(err.Error(), "--since") {
+			t.Errorf("err = %v", err)
+		}
+	})
+
+	t.Run("a backwards range is a mistake, not an empty answer", func(t *testing.T) {
+		_, _, err := exec(t, "--since", "2026-01-16", "--until", "2026-01-14")
+		if err == nil {
+			t.Fatal("want error, got nil")
+		}
+		if !strings.Contains(err.Error(), "--since") || !strings.Contains(err.Error(), "--until") {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
+// Ranking shares the filter, so it takes a range too.
+func TestSearchSinceWithFrequency(t *testing.T) {
+	useTempDB(t)
+
+	for _, m := range []struct {
+		cmd string
+		at  time.Time
+	}{
+		{"old", at(2026, 1, 1, 9, 0)},
+		{"new", at(2026, 1, 20, 9, 0)},
+	} {
+		start := fmt.Sprint(m.at.Unix())
+		if _, _, err := exec(t, "record", "--cmd", m.cmd, "--ret", "0",
+			"--start", start, "--end", start); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+	}
+
+	stdout, _, err := exec(t, "-F", "--since", "2026-01-15", "--columns", "cmd")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if want := "new\n"; stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
 }
 

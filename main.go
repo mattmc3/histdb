@@ -30,12 +30,24 @@ search options:
   -s, --session       only commands from this shell session
   -S, --all-sessions  commands from every shell session
       --like P        match commands against a SQL LIKE pattern
+      --since T       only commands started at or after T
+      --until T       only commands started before T
   -H, --head          oldest matches instead of newest
   -n, --limit N       rows to show (default 20), 0 for every match
       --no-dups       only the newest run of each command
 
 With neither -s nor -S, the zsh wrapper decides: SHARE_HISTORY shows every
 session, NO_SHARE_HISTORY only this one. -S overrides it either way.
+
+--since and --until take 2026-01-15, "2026-01-15 09:30", an RFC3339 time,
+@1700000000, yesterday, today, now, a duration like 2h or 90m, counts like
+"3 days ago" or "1 year 2 months ago", a weekday like friday or "last
+friday", a month and day like "december 25th", and a time of day like 10am,
+17:30, noon or midnight.
+
+Every relative form means the most recent one at or before now. A day named
+without a time of day runs midnight to midnight, so one date given to both
+flags is that whole day. The vocabulary is English only.
 
 ranking:
   -F, --sort-by-frequency   most run commands first, one row per command

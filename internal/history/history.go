@@ -96,6 +96,11 @@ type Filter struct {
 	Status     Status
 	Oldest     bool
 
+	// Since and Until bound when a command started: Since is inclusive,
+	// Until is not, and a zero time is no bound at all.
+	Since time.Time
+	Until time.Time
+
 	// Limit is how many rows to take: DefaultLimit when zero, every match
 	// when NoLimit.
 	Limit int
