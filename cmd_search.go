@@ -77,6 +77,7 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return fmt.Errorf("unexpected argument %q, match with --like '%%%s%%'",
 			fs.Args()[0], fs.Args()[0])
 	}
+	implicitLimit := !flagGiven(fs, "limit") && !*jsonl
 
 	filter := history.Filter{
 		Like:              *like,
@@ -165,7 +166,7 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		if err := renderFrequent(stdout, frequent, cols); err != nil {
 			return err
 		}
-		return warnLimit(stderr, len(frequent), filter.Limit)
+		return warnLimit(stderr, len(frequent), filter.Limit, implicitLimit)
 	}
 
 	spec := cmp.Or(*columns, defaultColumns)
@@ -186,7 +187,7 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := renderEntries(stdout, entries, cols, os.Getenv("HISTDB_SESSION"), useColor(stdout)); err != nil {
 		return err
 	}
-	return warnLimit(stderr, len(entries), filter.Limit)
+	return warnLimit(stderr, len(entries), filter.Limit, implicitLimit)
 }
 
 // The listing is `fc -li`: no header, one row per command, columns padded to
@@ -325,16 +326,20 @@ func rowLimit(fs *getopt.FlagSet, limit int, jsonl bool) int {
 	if limit == 0 {
 		return history.NoLimit
 	}
-	given := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "limit" {
-			given = true
-		}
-	})
-	if jsonl && !given {
+	if jsonl && !flagGiven(fs, "limit") {
 		return history.NoLimit
 	}
 	return limit
+}
+
+func flagGiven(fs *getopt.FlagSet, name string) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			given = true
+		}
+	})
+	return given
 }
 
 func allColumns[T any](set []column[T]) string {
@@ -397,8 +402,8 @@ func renderFrequent(w io.Writer, frequent []history.Frequent, cols []column[hist
 	return render(w, frequent, cols, nil)
 }
 
-func warnLimit(w io.Writer, rows, limit int) error {
-	if limit <= 0 || rows < limit {
+func warnLimit(w io.Writer, rows, limit int, implicit bool) error {
+	if !implicit || limit <= 0 || rows < limit {
 		return nil
 	}
 	_, err := fmt.Fprintf(w, "(limit: %d rows; change with -n <N>)\n", limit)
