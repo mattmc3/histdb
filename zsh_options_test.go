@@ -385,3 +385,15 @@ func TestZshWrapperPassesImportThrough(t *testing.T) {
 		t.Errorf("imported command missing from the listing:\n%s", out)
 	}
 }
+
+// The database has to reach anything the shell starts, and a value set before
+// sourcing is the caller's choice, not something to overwrite.
+func TestZshExportsDatabasePath(t *testing.T) {
+	z := newZshShell(t)
+
+	out := z.run("", "printenv HISTDB_FILE")
+
+	if !strings.Contains(out, z.db) {
+		t.Errorf("HISTDB_FILE not exported as %q:\n%s", z.db, out)
+	}
+}

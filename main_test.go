@@ -121,6 +121,23 @@ func TestInitPinsBinaryPath(t *testing.T) {
 	}
 }
 
+// Everything the shell starts inherits the database, so a subshell or a
+// script cannot end up recording somewhere else.
+func TestInitExportsDatabasePath(t *testing.T) {
+	t.Setenv("HISTDB_FILE", "")
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg")
+
+	stdout, _, err := exec(t, "init", "zsh")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	want := ": ${HISTDB_FILE:='/tmp/xdg/histdb/histdb.db'}\nexport HISTDB_FILE\n"
+	if !strings.Contains(stdout, want) {
+		t.Errorf("snippet missing %q:\n%s", want, stdout)
+	}
+}
+
 func TestInitUnsupportedShell(t *testing.T) {
 	_, _, err := exec(t, "init", "tcsh")
 	if err == nil {

@@ -40,6 +40,9 @@ func runInit(args []string, stdout io.Writer) error {
 	if self, err := os.Executable(); err == nil {
 		fmt.Fprintf(stdout, ": ${HISTDB_BIN:=%s}\n", shellQuote(self))
 	}
+	// Exported, so a subshell or a script records to the same database this
+	// shell searches, whatever it makes of XDG_DATA_HOME.
+	fmt.Fprintf(stdout, ": ${HISTDB_FILE:=%s}\nexport HISTDB_FILE\n", shellQuote(dbPath()))
 	_, err = stdout.Write(snippet)
 	return err
 }

@@ -54,6 +54,7 @@ terminal the id and ret are colored by exit status; NO_COLOR turns that off.
 
 environment:
   HISTDB_FILE      database path (default $XDG_DATA_HOME/histdb/histdb.db)
+                   exported by histdb init; set it before sourcing to choose
   HISTDB_SESSION   session key, set by the shell integration
 
 supported shells: zsh

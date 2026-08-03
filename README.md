@@ -50,7 +50,7 @@ so it is how you reach other sessions under `NO_SHARE_HISTORY`.
 
 | variable         | meaning                                                  |
 | ---------------- | -------------------------------------------------------- |
-| `HISTDB_FILE`    | database path, default `$XDG_DATA_HOME/histdb/histdb.db` |
+| `HISTDB_FILE`    | database path, exported by `histdb init`, default `$XDG_DATA_HOME/histdb/histdb.db` |
 | `HISTDB_SESSION` | session key, set by the shell integration                |
 | `HISTDB_BIN`     | binary the hooks call, pinned by `histdb init`           |
 
