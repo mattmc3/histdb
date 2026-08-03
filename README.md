@@ -1,8 +1,29 @@
 # histdb
 
-Shell history in SQLite.
+> Shell history in SQLite.
 
-TODO: Placeholder
+Having a queryable shell history is awesome. `histdb` records your shell commands in
+a SQLite database, so you can query instead of grepping a flat history file.
+
+## What about atuin?
+
+atuin is great if you want a full-featured history manager with syncing,
+encryption, TUI search, stats, and newer AI-assisted workflows.
+
+`histdb` is deliberately smaller and simpler. It records shell history in a local
+SQLite database and gives you direct, queryable access to it. No sync service, no
+account, no background server, no AI features, and no attempt to replace your
+shell. Just structured history that stays easy to query, script against, and
+analyze. Your regular shell history continues to work too, so if you ever decide
+to stop using `histdb` you can.
+
+## What shells are supported
+
+For now it's just Zsh, but other shells are coming soon.
+
+- [x] Zsh
+- [ ] Fish
+- [ ] Bash
 
 ## Install
 
@@ -10,9 +31,11 @@ TODO: Placeholder
 go install github.com/mattmc3/histdb@latest
 ```
 
-Or build from a clone:
+Or build from source:
 
 ```sh
+git clone https://github.com/mattmc3/histdb $HOME/src/histdb
+cd $HOME/src/histdb
 just build      # -> bin/histdb
 just install    # -> $GOBIN
 ```
@@ -135,8 +158,9 @@ histdb --columns id,time,cwd,cmd
 histdb -F --columns runs,cmd
 ```
 
-A table that fills its active row limit writes a notice to stderr naming `-n`,
-so pipes reading stdout do not get an extra row.
+A table that fills the default row limit writes a notice to stderr naming `-n`,
+so pipes reading stdout do not get an extra row. Passing `-n` makes the limit
+explicit and quiet.
 
 `--jsonl` writes one JSON object per line, every column and every match unless
 `--columns` or `-n` narrows it:
