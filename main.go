@@ -16,6 +16,13 @@ usage:
   histdb [options]             search history, same as histdb search
   histdb init <shell>          print shell integration to eval
   histdb record [options]      record one command, called by the shell hooks
+  histdb import <shell> <file> load a shell's own history file
+
+import options:
+      --format F   extended, plain, or auto to tell from the file (default)
+                   zsh writes extended only under EXTENDED_HISTORY, and a
+                   plain file has no times, so they are guessed from its
+                   modification time and only its order is trusted
 
 search options:
   -d, --here          only commands run in this directory
@@ -70,6 +77,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return runInit(args[1:], stdout)
 		case "record":
 			return runRecord(ctx, args[1:], stderr)
+		case "import":
+			return runImport(ctx, args[1:], stdout, stderr)
 		case "search":
 			return runSearch(ctx, args[1:], stdout, stderr)
 		}

@@ -120,6 +120,13 @@ type Repository interface {
 	Finish(ctx context.Context, e *Entry) error
 	Search(ctx context.Context, f Filter) ([]Entry, error)
 
+	// Import adds entries a shell recorded elsewhere, and reports how many
+	// rows it wrote. The rest were already stored.
+	Import(ctx context.Context, entries []Entry) (int, error)
+
+	// CountForSession is how many commands a session has stored.
+	CountForSession(ctx context.Context, sessionID int64) (int, error)
+
 	// MostFrequent ranks distinct commands by how often they ran.
 	MostFrequent(ctx context.Context, f Filter) ([]Frequent, error)
 }

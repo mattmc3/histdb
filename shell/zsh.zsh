@@ -112,7 +112,7 @@ histdb() {
   local sub
 
   case ${1:-} in
-    init|record) command "$HISTDB_BIN" "$@"; return $? ;;
+    init|record|import) command "$HISTDB_BIN" "$@"; return $? ;;
     search) sub=$1; shift ;;
   esac
 

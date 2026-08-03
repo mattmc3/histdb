@@ -89,6 +89,26 @@ histdb --columns id,time,cwd,cmd
 histdb -F --columns runs,cmd
 ```
 
+## Importing an existing history file
+
+```sh
+histdb import zsh $HISTFILE
+histdb import --format plain zsh ~/.zsh_history
+```
+
+Importing the same file twice adds nothing the second time, so it is safe to
+re-run as the file grows. A file is one session, keyed by its path.
+
+zsh writes times only under `EXTENDED_HISTORY`, and `--format` says which kind
+of file it is: `extended`, `plain`, or `auto` to tell from the first line.
+
+A history file times commands to the second and records no exit status, so an
+imported row has no `ret` and no `dur`, and two commands from the same second
+are stored a millisecond apart to keep them both. A `plain` file has no times
+at all: its commands are laid out one second apart ending at the file's
+modification time, and re-importing counts what is already stored rather than
+matching on time, which assumes the file only ever grows.
+
 ## Matching
 
 `--like` takes a SQL LIKE pattern, so `%` matches any run of characters and `_`

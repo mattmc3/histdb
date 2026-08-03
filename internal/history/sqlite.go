@@ -248,6 +248,131 @@ func (r *sqliteRepository) Finish(ctx context.Context, e *Entry) error {
 	return nil
 }
 
+// slot is what a session already holds: start times in use, and commands by
+// the second they ran in.
+type slot struct {
+	taken map[float64]bool
+	cmds  map[secondCmd]bool
+}
+
+type secondCmd struct {
+	second int64
+	cmd    string
+}
+
+// CountForSession is how many commands the session has stored.
+func (r *sqliteRepository) CountForSession(ctx context.Context, sessionID int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM history WHERE sid = ?", sessionID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count session %d: %w", sessionID, err)
+	}
+	return n, nil
+}
+
+// Import writes the entries in one transaction. The same command in the same
+// second is one already stored; a different one is nudged a millisecond on,
+// since (sid, start_at) is unique and dropping it would lose real history.
+func (r *sqliteRepository) Import(ctx context.Context, entries []Entry) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("import: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO history (sid, cwd, vcs_root, cmd, start_at, meta)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(sid, start_at) DO NOTHING`)
+	if err != nil {
+		return 0, fmt.Errorf("import: %w", err)
+	}
+	defer stmt.Close()
+
+	slots := map[int64]*slot{}
+	written := 0
+	for _, e := range entries {
+		if err := e.validForWrite(); err != nil {
+			return 0, fmt.Errorf("import: %w", err)
+		}
+		s, err := sessionSlots(ctx, tx, slots, e.Session.ID)
+		if err != nil {
+			return 0, err
+		}
+
+		start := epochOf(e.StartAt)
+		second := int64(math.Floor(start))
+		if s.cmds[secondCmd{second, e.Cmd}] {
+			continue
+		}
+		start, ok := s.free(start, second)
+		if !ok {
+			continue
+		}
+
+		if _, err := stmt.ExecContext(ctx, e.Session.ID, nullText(e.Cwd),
+			nullText(e.VCSRoot), e.Cmd, start, nullText(e.Meta)); err != nil {
+			return 0, fmt.Errorf("import: %w", err)
+		}
+		s.taken[start] = true
+		s.cmds[secondCmd{second, e.Cmd}] = true
+		written++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("import: %w", err)
+	}
+	return written, nil
+}
+
+// free finds an unused start time inside the same second, giving up rather
+// than spilling into the next one.
+func (s *slot) free(start float64, second int64) (float64, bool) {
+	for step := 0; step < 1000; step++ {
+		if !s.taken[start] {
+			return start, true
+		}
+		start = float64(second) + float64(step+1)/1000
+	}
+	return 0, false
+}
+
+// sessionSlots reads what the session already holds, once per session.
+func sessionSlots(ctx context.Context, tx *sql.Tx, cache map[int64]*slot, sid int64) (*slot, error) {
+	if s, ok := cache[sid]; ok {
+		return s, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, "SELECT start_at, cmd FROM history WHERE sid = ?", sid)
+	if err != nil {
+		return nil, fmt.Errorf("import: %w", err)
+	}
+	defer rows.Close()
+
+	s := &slot{taken: map[float64]bool{}, cmds: map[secondCmd]bool{}}
+	for rows.Next() {
+		var start sql.Null[float64]
+		var cmd string
+		if err := rows.Scan(&start, &cmd); err != nil {
+			return nil, fmt.Errorf("import: %w", err)
+		}
+		if start.Valid {
+			s.taken[start.V] = true
+			s.cmds[secondCmd{int64(math.Floor(start.V)), cmd}] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("import: %w", err)
+	}
+	cache[sid] = s
+	return s, nil
+}
+
+// epochOf is what nullTime stores, as a number to compare against.
+func epochOf(t time.Time) float64 {
+	return float64(t.UTC().UnixNano()) / 1e9
+}
+
 // insert writes the row, merging with whatever the other write already stored.
 // Values a caller does not know are NULL, and COALESCE keeps a NULL from
 // blanking a value the other write supplied.
@@ -448,7 +573,7 @@ func nullTime(t time.Time) any {
 	if t.IsZero() {
 		return nil
 	}
-	return float64(t.UTC().UnixNano()) / 1e9
+	return epochOf(t)
 }
 
 // fromEpoch reverses nullTime. Rounding to the microsecond drops the float

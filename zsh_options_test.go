@@ -364,3 +364,24 @@ func TestZshAllSessionsOverridesShareHistory(t *testing.T) {
 		t.Errorf("-S missing the other session's command:\n%s", out)
 	}
 }
+
+// import is a subcommand, so the wrapper must hand it over whole rather than
+// treat it as a search with flags of its own.
+func TestZshWrapperPassesImportThrough(t *testing.T) {
+	z := newZshShell(t)
+
+	histfile := filepath.Join(t.TempDir(), "zsh_history")
+	if err := os.WriteFile(histfile, []byte(": 1700000000:0;from a histfile\n"), 0o600); err != nil {
+		t.Fatalf("write histfile: %v", err)
+	}
+
+	out := z.run("unsetopt share_history",
+		"histdb import zsh "+histfile+"\n"+settleCmd+"histdb -S --columns cmd")
+
+	if !strings.Contains(out, "imported 1 command") {
+		t.Errorf("import did not run through the wrapper:\n%s", out)
+	}
+	if !strings.Contains(out, "from a histfile") {
+		t.Errorf("imported command missing from the listing:\n%s", out)
+	}
+}
