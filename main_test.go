@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -646,6 +647,185 @@ func TestSearchColumns(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
+}
+
+// One JSON object per line, so a command with a newline in it stays one
+// record and the whole listing streams.
+func TestSearchJSONL(t *testing.T) {
+	useTempDB(t)
+
+	if _, _, err := exec(t, "record", "--cmd", "git status", "--cwd", "/tmp",
+		"--ret", "0", "--start", "100", "--end", "100.5"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if _, _, err := exec(t, "record", "--cmd", "echo 'first\nsecond'", "--cwd", "/tmp",
+		"--ret", "2", "--start", "200", "--end", "201"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	stdout, _, err := exec(t, "--jsonl")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want one per command:\n%s", len(lines), stdout)
+	}
+
+	var first map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("line 1 is not JSON: %v", err)
+	}
+	want := map[string]any{
+		"id": 1.0, "dur": 0.5, "ret": 0.0, "cwd": "/tmp",
+		"session": "test-session", "cmd": "git status",
+	}
+	for key, value := range want {
+		if first[key] != value {
+			t.Errorf("%s = %#v, want %#v", key, first[key], value)
+		}
+	}
+	if _, err := time.Parse(time.RFC3339, first["time"].(string)); err != nil {
+		t.Errorf("time = %v, want RFC3339: %v", first["time"], err)
+	}
+
+	var second map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("line 2 is not JSON: %v", err)
+	}
+	if got, want := second["cmd"], "echo 'first\nsecond'"; got != want {
+		t.Errorf("cmd = %q, want %q", got, want)
+	}
+}
+
+// A command still running has no duration and no status, which is null and
+// not a dash once it is JSON.
+func TestSearchJSONLNullsWhatIsUnknown(t *testing.T) {
+	useTempDB(t)
+
+	// Another session: the one command this session never sees is the one it
+	// is running right now.
+	if _, _, err := exec(t, "record", "--session", "elsewhere",
+		"--cmd", "sleep 100", "--start", "100"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	stdout, _, err := exec(t, "--jsonl")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &row); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	for _, key := range []string{"dur", "ret"} {
+		if value, ok := row[key]; !ok || value != nil {
+			t.Errorf("%s = %#v, want null", key, value)
+		}
+	}
+}
+
+func TestSearchJSONLColumns(t *testing.T) {
+	useTempDB(t)
+
+	if _, _, err := exec(t, "record", "--cmd", "git status", "--ret", "0",
+		"--start", "100", "--end", "101"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	t.Run("only what was asked for", func(t *testing.T) {
+		stdout, _, err := exec(t, "--jsonl", "--columns", "cmd,ret")
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if want := `{"cmd":"git status","ret":0}` + "\n"; stdout != want {
+			t.Errorf("stdout = %q, want %q", stdout, want)
+		}
+	})
+
+	t.Run("ranking has its own columns", func(t *testing.T) {
+		stdout, _, err := exec(t, "-F", "--jsonl", "--columns", "runs,cmd")
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if want := `{"runs":1,"cmd":"git status"}` + "\n"; stdout != want {
+			t.Errorf("stdout = %q, want %q", stdout, want)
+		}
+	})
+}
+
+// What the session knows belongs to every command that ran in it.
+func TestSearchSessionColumns(t *testing.T) {
+	useTempDB(t)
+
+	if _, _, err := exec(t, "record", "--shell", "zsh", "--session", "s1",
+		"--tty", "ttys009", "--host", "box", "--user", "someone",
+		"--cmd", "git status", "--ret", "0", "--start", "100", "--end", "101"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	stdout, _, err := exec(t, "--jsonl")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &row); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	want := map[string]any{
+		"session": "s1", "shell": "zsh", "host": "box",
+		"user": "someone", "tty": "ttys009",
+	}
+	for key, value := range want {
+		if row[key] != value {
+			t.Errorf("%s = %#v, want %#v", key, row[key], value)
+		}
+	}
+
+	table, _, err := exec(t, "--columns", "host,user,cmd")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if want := "box  someone  git status\n"; table != want {
+		t.Errorf("table = %q, want %q", table, want)
+	}
+}
+
+// -n 0 is every match. JSON is read by a program, so it takes every match
+// unless told otherwise.
+func TestSearchLimit(t *testing.T) {
+	useTempDB(t)
+
+	for i := range 25 {
+		if _, _, err := exec(t, "record", "--cmd", fmt.Sprintf("cmd%02d", i),
+			"--ret", "0", "--start", fmt.Sprint(100+i), "--end", fmt.Sprint(101+i)); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"table stops at the default", []string{"--columns", "cmd"}, 20},
+		{"-n 0 is everything", []string{"-n", "0", "--columns", "cmd"}, 25},
+		{"-n counts", []string{"-n", "5", "--columns", "cmd"}, 5},
+		{"jsonl is everything", []string{"--jsonl"}, 25},
+		{"jsonl still takes -n", []string{"--jsonl", "-n", "5"}, 5},
+		{"ranking takes -n 0", []string{"-F", "-n", "0", "--columns", "cmd"}, 25},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, err := exec(t, tc.args...)
+			if err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			if got := strings.Count(stdout, "\n"); got != tc.want {
+				t.Errorf("got %d rows, want %d", got, tc.want)
+			}
+		})
+	}
 }
 
 // Exit status survives in the listing as the color of the id.

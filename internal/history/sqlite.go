@@ -15,8 +15,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DefaultLimit caps a search that does not ask for a row count.
-const DefaultLimit = 20
+// DefaultLimit caps a search that does not ask for a row count. NoLimit is a
+// Filter.Limit asking for every match.
+const (
+	DefaultLimit = 20
+	NoLimit      = -1
+)
 
 // migrations run in order; the index of each is the schema version it
 // upgrades from.
@@ -444,7 +448,11 @@ func (f Filter) where() (string, []any) {
 }
 
 func (f Filter) rowLimit() int {
-	if f.Limit <= 0 {
+	switch {
+	case f.Limit < 0:
+		// SQLite reads a negative LIMIT as no limit at all.
+		return NoLimit
+	case f.Limit == 0:
 		return DefaultLimit
 	}
 	return f.Limit

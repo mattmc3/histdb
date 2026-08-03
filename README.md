@@ -81,13 +81,35 @@ that off.
 ```
 
 `--columns` picks the fields and their order: `id`, `time`, `dur`, `ret`,
-`cwd`, `session`, `cmd`, or with `-F`, `runs`, `last`, `cmd`.
+`cwd`, `session`, `shell`, `host`, `user`, `tty`, `cmd`, or with `-F`, `runs`,
+`last`, `cmd`. The last four come from the session the command ran in.
 
 ```sh
 histdb --columns cmd            # bare command lines, for feeding other tools
 histdb --columns id,time,cwd,cmd
 histdb -F --columns runs,cmd
 ```
+
+`--jsonl` writes one JSON object per line, every column and every match unless
+`--columns` or `-n` narrows it:
+
+```sh
+histdb --jsonl | jq -r 'select(.ret != 0) | .cmd'
+histdb --jsonl -n 100 | jq -r 'select(.host == "box") | .cmd'
+```
+
+```json
+{"id":1,"time":"2026-08-03T07:31:20-05:00","dur":0.5,"ret":0,"cwd":"/tmp","session":"1000.4242.1","shell":"zsh","host":"box","user":"someone","tty":"ttys009","cmd":"git status"}
+```
+
+Times are RFC3339, a command that has not finished yet has `null` for `dur`
+and `ret`, and `cwd` is the full path rather than the `~` the table shows. A
+command containing a newline stays one line and one record, which is what the
+plain listing cannot promise.
+
+The table stops at 20 rows and JSON does not, on the grounds that a reader
+wants a page and a program wants the answer. `-n 0` means every match in
+either.
 
 ## Importing an existing history file
 

@@ -95,7 +95,10 @@ type Filter struct {
 	SessionKey string
 	Status     Status
 	Oldest     bool
-	Limit      int
+
+	// Limit is how many rows to take: DefaultLimit when zero, every match
+	// when NoLimit.
+	Limit int
 
 	// Unique keeps only the newest run of each distinct command, which is
 	// what zsh's HIST_FIND_NO_DUPS shows.

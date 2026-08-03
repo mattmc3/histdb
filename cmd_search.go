@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mattmc3/getopt"
@@ -33,10 +36,11 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	allSessions := fs.Define("all-sessions", false, "commands from every shell session")
 	like := fs.Define("like", "", "SQL LIKE pattern, wildcards as written")
 	head := fs.Define("head", false, "oldest matches instead of newest")
-	limit := fs.Define("limit", history.DefaultLimit, "rows to show")
+	limit := fs.Define("limit", history.DefaultLimit, "rows to show, 0 for every match")
 	byFrequency := fs.Define("sort-by-frequency", false, "most run commands first")
 	preferHere := fs.Define("prefer-here", false, "rank this directory's commands first")
 	columns := fs.Define("columns", "", "comma separated columns to print")
+	jsonl := fs.Define("jsonl", false, "one JSON object per line")
 	fs.Aliases(
 		"h", "help",
 		"v", "version",
@@ -75,7 +79,7 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	filter := history.Filter{
 		Like:              *like,
 		Oldest:            *head,
-		Limit:             *limit,
+		Limit:             rowLimit(fs, *limit, *jsonl),
 		Unique:            *unique,
 		CurrentSessionKey: os.Getenv("HISTDB_SESSION"),
 	}
@@ -117,7 +121,13 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	// Ranking by frequency collapses runs into one row per command, so it has
 	// columns of its own: there is no single time or exit status left to show.
 	if *byFrequency {
-		cols, err := freqColumns(cmp.Or(*columns, defaultFreqColumns))
+		// JSON is read by a program, so it defaults to every column rather
+		// than the three a person wants to look at.
+		spec := cmp.Or(*columns, defaultFreqColumns)
+		if *jsonl && *columns == "" {
+			spec = allColumns(freqColumnSet)
+		}
+		cols, err := freqColumns(spec)
 		if err != nil {
 			return err
 		}
@@ -125,16 +135,26 @@ func runSearch(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		if err != nil {
 			return err
 		}
+		if *jsonl {
+			return renderJSONL(stdout, frequent, cols)
+		}
 		return renderFrequent(stdout, frequent, cols)
 	}
 
-	cols, err := entryColumns(cmp.Or(*columns, defaultColumns))
+	spec := cmp.Or(*columns, defaultColumns)
+	if *jsonl && *columns == "" {
+		spec = allColumns(entryColumnSet)
+	}
+	cols, err := entryColumns(spec)
 	if err != nil {
 		return err
 	}
 	entries, err := store.Entries().Search(ctx, filter)
 	if err != nil {
 		return err
+	}
+	if *jsonl {
+		return renderJSONL(stdout, entries, cols)
 	}
 	return renderEntries(stdout, entries, cols, os.Getenv("HISTDB_SESSION"), useColor(stdout))
 }
@@ -148,37 +168,151 @@ const (
 )
 
 // A column of the listing. right-aligns the numeric ones, the way fc lines up
-// its ids.
+// its ids. cell is what a reader sees, value what a program gets: a dash is a
+// missing number to one and null to the other.
 type column[T any] struct {
 	name  string
 	right bool
 	cell  func(T) string
+	value func(T) any
 }
 
 var entryColumnSet = []column[history.Entry]{
-	{"id", true, func(e history.Entry) string { return strconv.FormatInt(e.ID, 10) }},
-	{"time", false, func(e history.Entry) string { return e.StartAt.Local().Format(timeFormat) }},
-	{"dur", true, func(e history.Entry) string {
-		if !e.Finished() {
-			return "-"
-		}
-		return fmt.Sprintf("%.2f", e.Duration().Seconds())
-	}},
-	{"ret", true, func(e history.Entry) string {
-		if !e.Finished() {
-			return "-"
-		}
-		return strconv.Itoa(e.Ret)
-	}},
-	{"cwd", false, func(e history.Entry) string { return shortenHome(e.Cwd) }},
-	{"session", false, func(e history.Entry) string { return e.Session.Key }},
-	{"cmd", false, func(e history.Entry) string { return e.Cmd }},
+	{"id", true,
+		func(e history.Entry) string { return strconv.FormatInt(e.ID, 10) },
+		func(e history.Entry) any { return e.ID }},
+	{"time", false,
+		func(e history.Entry) string { return e.StartAt.Local().Format(timeFormat) },
+		func(e history.Entry) any { return e.StartAt.Local().Format(time.RFC3339) }},
+	{"dur", true,
+		func(e history.Entry) string {
+			if !e.Finished() {
+				return "-"
+			}
+			return fmt.Sprintf("%.2f", e.Duration().Seconds())
+		},
+		func(e history.Entry) any {
+			if !e.Finished() {
+				return nil
+			}
+			return e.Duration().Seconds()
+		}},
+	{"ret", true,
+		func(e history.Entry) string {
+			if !e.Finished() {
+				return "-"
+			}
+			return strconv.Itoa(e.Ret)
+		},
+		func(e history.Entry) any {
+			if !e.Finished() {
+				return nil
+			}
+			return e.Ret
+		}},
+	{"cwd", false,
+		func(e history.Entry) string { return shortenHome(e.Cwd) },
+		func(e history.Entry) any { return e.Cwd }},
+	{"session", false,
+		func(e history.Entry) string { return e.Session.Key },
+		func(e history.Entry) any { return e.Session.Key }},
+	{"shell", false,
+		func(e history.Entry) string { return e.Session.Shell },
+		func(e history.Entry) any { return e.Session.Shell }},
+	{"host", false,
+		func(e history.Entry) string { return e.Session.Host },
+		func(e history.Entry) any { return e.Session.Host }},
+	{"user", false,
+		func(e history.Entry) string { return e.Session.User },
+		func(e history.Entry) any { return e.Session.User }},
+	{"tty", false,
+		func(e history.Entry) string { return e.Session.TTY },
+		func(e history.Entry) any { return e.Session.TTY }},
+	{"cmd", false,
+		func(e history.Entry) string { return e.Cmd },
+		func(e history.Entry) any { return e.Cmd }},
 }
 
 var freqColumnSet = []column[history.Frequent]{
-	{"runs", true, func(f history.Frequent) string { return strconv.Itoa(f.Count) }},
-	{"last", false, func(f history.Frequent) string { return f.LastAt.Local().Format(timeFormat) }},
-	{"cmd", false, func(f history.Frequent) string { return f.Cmd }},
+	{"runs", true,
+		func(f history.Frequent) string { return strconv.Itoa(f.Count) },
+		func(f history.Frequent) any { return f.Count }},
+	{"last", false,
+		func(f history.Frequent) string { return f.LastAt.Local().Format(timeFormat) },
+		func(f history.Frequent) any { return f.LastAt.Local().Format(time.RFC3339) }},
+	{"cmd", false,
+		func(f history.Frequent) string { return f.Cmd },
+		func(f history.Frequent) any { return f.Cmd }},
+}
+
+// renderJSONL writes one object per row, keys in the order the columns were
+// asked for.
+func renderJSONL[T any](w io.Writer, rows []T, cols []column[T]) error {
+	var line strings.Builder
+	for _, row := range rows {
+		line.Reset()
+		line.WriteByte('{')
+		for i, c := range cols {
+			if i > 0 {
+				line.WriteByte(',')
+			}
+			key, err := jsonValue(c.name)
+			if err != nil {
+				return err
+			}
+			value, err := jsonValue(c.value(row))
+			if err != nil {
+				return err
+			}
+			line.WriteString(key)
+			line.WriteByte(':')
+			line.WriteString(value)
+		}
+		line.WriteByte('}')
+		if _, err := fmt.Fprintln(w, line.String()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// jsonValue encodes one value, leaving &, < and > as themselves: this is a
+// pipe, not a web page.
+func jsonValue(v any) (string, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(buf.String(), "\n"), nil
+}
+
+// rowLimit reads -n. Zero asks for every match, and JSON with no -n at all is
+// taken the same way: a program wants the whole answer, a reader wants a page
+// of it.
+func rowLimit(fs *getopt.FlagSet, limit int, jsonl bool) int {
+	if limit == 0 {
+		return history.NoLimit
+	}
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "limit" {
+			given = true
+		}
+	})
+	if jsonl && !given {
+		return history.NoLimit
+	}
+	return limit
+}
+
+func allColumns[T any](set []column[T]) string {
+	names := make([]string, len(set))
+	for i, c := range set {
+		names[i] = c.name
+	}
+	return strings.Join(names, ",")
 }
 
 func entryColumns(spec string) ([]column[history.Entry], error) {

@@ -31,7 +31,7 @@ search options:
   -S, --all-sessions  commands from every shell session
       --like P        match commands against a SQL LIKE pattern
   -H, --head          oldest matches instead of newest
-  -n, --limit N       rows to show (default 20)
+  -n, --limit N       rows to show (default 20), 0 for every match
       --no-dups       only the newest run of each command
 
 With neither -s nor -S, the zsh wrapper decides: SHARE_HISTORY shows every
@@ -42,9 +42,14 @@ ranking:
       --prefer-here         with -F, rank this directory's commands first
 
 output:
-      --columns C  comma separated columns, in the order given
-                   id, time, dur, ret, cwd, session, cmd (default id,time,cmd)
-                   with -F: runs, last, cmd (default runs,last,cmd)
+      --columns C  comma separated columns, in the order given (default
+                   id,time,cmd, or runs,last,cmd with -F)
+                   id, time, dur, ret, cwd, session, shell, host, user, tty,
+                   cmd; with -F: runs, last, cmd
+      --jsonl      one JSON object per line, every column and every match
+                   unless --columns or -n says otherwise. Times are RFC3339,
+                   a command that has not finished has null dur and ret, and
+                   a newline inside a command stays inside its string
 
   -h, --help       print this help
   -v, --version    print version
