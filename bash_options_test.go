@@ -65,6 +65,8 @@ func TestBashKeepsCommandsFromTheSameSecond(t *testing.T) {
 // recorded. Leading space is the one way to say do not record this at all, so
 // it is the one setting left with bash.
 func TestBashIgnoreSpace(t *testing.T) {
+	t.Parallel()
+
 	t.Run("on", func(t *testing.T) {
 		b := newBashShell(t)
 		b.run("HISTCONTROL=ignorespace", " echo secret\necho kept")

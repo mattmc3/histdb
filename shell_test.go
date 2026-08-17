@@ -9,7 +9,9 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -31,7 +33,14 @@ var shells = map[string]struct {
 	"bash": {[]string{"--norc", "--noprofile", "-is"}, `eval "$(histdb init bash)"`},
 }
 
+// shellPath holds the binary each shell's tests drive, filled in by TestMain
+// and empty for a shell this machine cannot run them on.
+var shellPath = map[string]string{}
+
 func TestMain(m *testing.M) {
+	for name := range shells {
+		shellPath[name] = findShell(name)
+	}
 	if anyShellInstalled() {
 		dir, err := os.MkdirTemp("", "histdb-bin")
 		if err != nil {
@@ -50,9 +59,37 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// findShell picks the binary to drive, or "" when there is none to drive. The
+// bash integration needs 5.0, and macOS still ships 3.2 as the `bash` on PATH,
+// so the ones a newer bash is usually installed as are tried after it.
+func findShell(name string) string {
+	candidates := []string{name}
+	if name == "bash" {
+		candidates = append(candidates, "/opt/homebrew/bin/bash", "/usr/local/bin/bash")
+	}
+
+	for _, candidate := range candidates {
+		path, err := osexec.LookPath(candidate)
+		if err != nil {
+			continue
+		}
+		if name != "bash" {
+			return path
+		}
+		out, err := osexec.Command(path, "-c", "echo ${BASH_VERSINFO[0]}").Output()
+		if err != nil {
+			continue
+		}
+		if major, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && major >= 5 {
+			return path
+		}
+	}
+	return ""
+}
+
 func anyShellInstalled() bool {
-	for name := range shells {
-		if _, err := osexec.LookPath(name); err == nil {
+	for _, path := range shellPath {
+		if path != "" {
 			return true
 		}
 	}
@@ -78,9 +115,23 @@ func newBashShell(t *testing.T) *shellSession { return newShell(t, "bash") }
 func newShell(t *testing.T, shell string) *shellSession {
 	t.Helper()
 
-	if _, err := osexec.LookPath(shell); err != nil || binDir == "" {
-		t.Skip(shell + " not installed")
+	if shellPath[shell] == "" || binDir == "" {
+		missing := shell + " not installed"
+		if shell == "bash" {
+			missing = "no bash 5.0 or newer installed"
+		}
+		// CI installs every shell deliberately, and `go test` says nothing about
+		// a skip, so there a missing one means the coverage quietly went away.
+		if os.Getenv("CI") != "" {
+			t.Fatal(missing)
+		}
+		t.Skip(missing)
 	}
+	// Almost all of a shell test is spent waiting on a shell that is not this
+	// process. Each one owns its database and its temporary directory, so they
+	// have nothing to wait on each other for.
+	t.Parallel()
+
 	dir := t.TempDir()
 	return &shellSession{t: t, shell: shell, dir: dir, db: filepath.Join(dir, "histdb.db")}
 }
@@ -92,8 +143,13 @@ func (s *shellSession) run(setup, script string) string {
 	s.t.Helper()
 
 	input := setup + "\n" + shells[s.shell].load + "\n" + script + "\n"
-	cmd := osexec.Command(s.shell, shells[s.shell].args...)
+	cmd := osexec.Command(shellPath[s.shell], shells[s.shell].args...)
 	cmd.Stdin = strings.NewReader(input)
+	// An interactive shell opens the controlling terminal to set up job control,
+	// and touching it from a background process group stops the process, which
+	// the terminal reports as `suspended (tty input)` against the whole test
+	// run. Its own session leaves it no terminal to reach for.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Env = append(os.Environ(),
 		"HISTDB_FILE="+s.db,
 		// Bash keeps a history list of its own and the hooks read it back, so

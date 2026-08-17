@@ -21,6 +21,8 @@ func TestZshRecordsAfterPathLosesHistdb(t *testing.T) {
 // HIST_IGNORE_SPACE: a command whose first character is a space is not
 // recorded.
 func TestZshIgnoreSpace(t *testing.T) {
+	t.Parallel()
+
 	t.Run("on", func(t *testing.T) {
 		z := newZshShell(t)
 		z.run("setopt hist_ignore_space", " echo secret\necho kept")
@@ -40,6 +42,8 @@ func TestZshIgnoreSpace(t *testing.T) {
 // HIST_REDUCE_BLANKS: runs of whitespace collapse before the command is
 // recorded.
 func TestZshReduceBlanks(t *testing.T) {
+	t.Parallel()
+
 	t.Run("on", func(t *testing.T) {
 		z := newZshShell(t)
 		z.run("setopt hist_reduce_blanks", "echo    wide     gaps")
@@ -95,6 +99,8 @@ func TestZshNoStoreRecordsAnyway(t *testing.T) {
 
 // SHARE_HISTORY: off means a search only reports this shell's own commands.
 func TestZshShareHistory(t *testing.T) {
+	t.Parallel()
+
 	t.Run("off", func(t *testing.T) {
 		z := newZshShell(t)
 		z.seed("another-shell", "from another shell", 100)
@@ -123,6 +129,8 @@ func TestZshShareHistory(t *testing.T) {
 
 // HIST_FIND_NO_DUPS: a search reports each command once, its newest run.
 func TestZshFindNoDups(t *testing.T) {
+	t.Parallel()
+
 	t.Run("on", func(t *testing.T) {
 		z := newZshShell(t)
 		out := z.run("setopt hist_find_no_dups\nunsetopt hist_ignore_dups",
@@ -162,6 +170,8 @@ func TestZshWrapperKeepsSubcommands(t *testing.T) {
 // HIST_IGNORE_ALL_DUPS and HIST_SAVE_NO_DUPS are documented as unsupported,
 // since histdb keeps every run of a command.
 func TestZshDupPruningOptionsAreIgnored(t *testing.T) {
+	t.Parallel()
+
 	for _, opt := range []string{"hist_ignore_all_dups", "hist_save_no_dups"} {
 		t.Run(opt, func(t *testing.T) {
 			z := newZshShell(t)
