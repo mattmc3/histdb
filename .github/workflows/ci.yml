@@ -13,6 +13,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      # The shell integration is tested by driving a real shell, so both have
+      # to be here. macOS ships bash 3.2, which the bash hooks do not support.
+      - name: install zsh
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: install bash 5
+        if: runner.os == 'macOS'
+        run: brew install bash
       - uses: actions/setup-go@v7
         with:
           # setup-go reads "go 1.27rc2" from go.mod as "1.27", so the rc is
