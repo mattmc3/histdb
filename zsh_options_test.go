@@ -4,163 +4,11 @@ package main
 // so the hooks and wrapper in shell/zsh.zsh are what run, not a Go stand-in.
 
 import (
-	"context"
-	"fmt"
-	"io"
 	"os"
-	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/mattmc3/histdb/internal/history"
 )
-
-// binDir holds a built histdb for the hooks to call, or "" when zsh is absent.
-var binDir string
-
-func TestMain(m *testing.M) {
-	if _, err := osexec.LookPath("zsh"); err == nil {
-		dir, err := os.MkdirTemp("", "histdb-bin")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "temp dir:", err)
-			os.Exit(1)
-		}
-		out, err := osexec.Command("go", "build", "-o", filepath.Join(dir, "histdb"), ".").CombinedOutput()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "build histdb: %v\n%s", err, out)
-			os.RemoveAll(dir)
-			os.Exit(1)
-		}
-		binDir = dir
-		defer os.RemoveAll(dir)
-	}
-	os.Exit(m.Run())
-}
-
-// settleCmd gives the disowned record writes time to land before a query in
-// the same shell reads them back.
-const settleCmd = "sleep 1\n"
-
-type zshShell struct {
-	t  *testing.T
-	db string
-}
-
-func newZshShell(t *testing.T) *zshShell {
-	t.Helper()
-
-	if binDir == "" {
-		t.Skip("zsh not installed")
-	}
-	return &zshShell{t: t, db: filepath.Join(t.TempDir(), "histdb.db")}
-}
-
-// run starts a zsh with setopts already in effect before the hooks are
-// installed, so those setopt lines are not themselves recorded, then feeds it
-// script. Returns everything the shell printed.
-func (z *zshShell) run(setopts, script string) string {
-	z.t.Helper()
-
-	input := setopts + "\nsource <(histdb init zsh)\n" + script + "\n"
-	cmd := osexec.Command("zsh", "-f", "-is")
-	cmd.Stdin = strings.NewReader(input)
-	cmd.Env = append(os.Environ(),
-		"HISTDB_FILE="+z.db,
-		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-	)
-	var out strings.Builder
-	cmd.Stdout, cmd.Stderr = &out, io.Discard
-	if err := cmd.Run(); err != nil {
-		z.t.Fatalf("zsh: %v", err)
-	}
-	z.settle()
-	return out.String()
-}
-
-// settle waits for the backgrounded record writes to stop arriving. They are
-// disowned, so the shell exiting says nothing about whether they landed.
-func (z *zshShell) settle() {
-	z.t.Helper()
-
-	deadline := time.Now().Add(10 * time.Second)
-	last, stable := -1, 0
-	for time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
-		n := len(z.recorded())
-		if n == last {
-			if stable++; stable >= 4 {
-				return
-			}
-			continue
-		}
-		last, stable = n, 0
-	}
-	z.t.Fatal("timed out waiting for records to land")
-}
-
-// seed writes a row as if another shell had run it.
-func (z *zshShell) seed(session, cmd string, start float64) {
-	z.t.Helper()
-
-	seed := osexec.Command(filepath.Join(binDir, "histdb"), "record",
-		"--shell", "zsh", "--session", session, "--cmd", cmd, "--ret", "0",
-		"--start", fmt.Sprint(start), "--end", fmt.Sprint(start+1),
-	)
-	// Never inherit the environment here: without this the row lands in the
-	// caller's own history database.
-	seed.Env = append(os.Environ(), "HISTDB_FILE="+z.db)
-	if out, err := seed.CombinedOutput(); err != nil {
-		z.t.Fatalf("seed %q: %v: %s", cmd, err, out)
-	}
-}
-
-func (z *zshShell) recorded() []string {
-	z.t.Helper()
-
-	if _, err := os.Stat(z.db); err != nil {
-		return nil
-	}
-	store, err := history.Open(context.Background(), z.db)
-	if err != nil {
-		z.t.Fatalf("open: %v", err)
-	}
-	defer store.Close()
-
-	entries, err := store.Entries().Search(context.Background(), history.Filter{Limit: 1000})
-	if err != nil {
-		z.t.Fatalf("search: %v", err)
-	}
-	cmds := make([]string, len(entries))
-	for i, e := range entries {
-		cmds[i] = e.Cmd
-	}
-	return cmds
-}
-
-func (z *zshShell) assertRecorded(want ...string) {
-	z.t.Helper()
-
-	got := z.recorded()
-	if len(got) != len(want) {
-		z.t.Fatalf("recorded %q, want %q", got, want)
-	}
-	for _, w := range want {
-		if !contains(got, w) {
-			z.t.Errorf("recorded %q, missing %q", got, w)
-		}
-	}
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
-}
 
 // A version manager or a script can rewrite PATH after the hooks install.
 func TestZshRecordsAfterPathLosesHistdb(t *testing.T) {
@@ -207,58 +55,42 @@ func TestZshReduceBlanks(t *testing.T) {
 	})
 }
 
-// HIST_IGNORE_DUPS: a command identical to the one before it is not recorded.
-func TestZshIgnoreDups(t *testing.T) {
-	t.Run("on", func(t *testing.T) {
-		z := newZshShell(t)
-		z.run("setopt hist_ignore_dups", "echo twice\necho twice\necho after")
+// HIST_IGNORE_DUPS keeps a repeat out of zsh's own history, not out of histdb:
+// if you ran it, it is recorded, and duplicates are a matter for searching and
+// purging.
+func TestZshIgnoreDupsRecordsBothRuns(t *testing.T) {
+	z := newZshShell(t)
+	z.run("setopt hist_ignore_dups", "echo twice\necho twice\necho after")
 
-		z.assertRecorded("echo twice", "echo after")
-	})
-
-	t.Run("off", func(t *testing.T) {
-		z := newZshShell(t)
-		z.run("unsetopt hist_ignore_dups", "echo twice\necho twice")
-
-		if got := z.recorded(); len(got) != 2 {
-			t.Errorf("recorded %q, want the command twice", got)
-		}
-	})
+	z.assertRecorded("echo twice", "echo twice", "echo after")
 }
 
-// HIST_NO_FUNCTIONS: function definitions are not recorded.
-func TestZshNoFunctions(t *testing.T) {
-	t.Run("on", func(t *testing.T) {
-		z := newZshShell(t)
-		z.run("setopt hist_no_functions",
-			"myfunc() { echo hi; }\nfunction otherfunc { echo hi; }\necho kept")
+// HIST_IGNORE_ALL_DUPS, same again.
+func TestZshIgnoreAllDupsRecordsEveryRun(t *testing.T) {
+	z := newZshShell(t)
+	z.run("setopt hist_ignore_all_dups", "echo A\necho B\necho A")
 
-		z.assertRecorded("echo kept")
-	})
-
-	t.Run("off", func(t *testing.T) {
-		z := newZshShell(t)
-		z.run("unsetopt hist_no_functions", "myfunc() { echo hi; }")
-
-		z.assertRecorded("myfunc() { echo hi; }")
-	})
+	z.assertRecorded("echo A", "echo B", "echo A")
 }
 
-// HIST_NO_STORE: the commands used to read history back are not recorded.
-func TestZshNoStore(t *testing.T) {
-	t.Run("on", func(t *testing.T) {
-		z := newZshShell(t)
-		z.run("setopt hist_no_store", "history\nfc -l\necho kept")
+// HIST_NO_FUNCTIONS keeps a function definition out of zsh's history. histdb
+// still records it: enabling histdb is itself the choice to keep history in
+// SQLite.
+func TestZshNoFunctionsRecordsAnyway(t *testing.T) {
+	z := newZshShell(t)
+	z.run("setopt hist_no_functions",
+		"myfunc() { echo hi; }\nfunction otherfunc { echo hi; }\necho kept")
 
-		z.assertRecorded("echo kept")
-	})
+	z.assertRecorded("myfunc() { echo hi; }", "function otherfunc { echo hi; }",
+		"echo kept")
+}
 
-	t.Run("off", func(t *testing.T) {
-		z := newZshShell(t)
-		z.run("unsetopt hist_no_store", "history")
+// HIST_NO_STORE, same again.
+func TestZshNoStoreRecordsAnyway(t *testing.T) {
+	z := newZshShell(t)
+	z.run("setopt hist_no_store", "history\nfc -l\necho kept")
 
-		z.assertRecorded("history")
-	})
+	z.assertRecorded("history", "fc -l", "echo kept")
 }
 
 // SHARE_HISTORY: off means a search only reports this shell's own commands.

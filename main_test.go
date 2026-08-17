@@ -108,6 +108,37 @@ func TestInitZsh(t *testing.T) {
 	}
 }
 
+func TestInitBash(t *testing.T) {
+	stdout, _, err := exec(t, "init", "bash")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.HasPrefix(stdout, "# histdb 0.0.1 init for bash\n") {
+		t.Errorf("missing header: %q", stdout)
+	}
+	for _, want := range []string{"_histdb_preexec", "_histdb_precmd", `"$HISTDB_BIN" record`} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("snippet missing %q", want)
+		}
+	}
+}
+
+// The bash snippet is loaded with eval as often as with source, and `return`
+// outside a sourced file is an error.
+func TestInitBashHasNothingToSource(t *testing.T) {
+	stdout, _, err := exec(t, "init", "bash")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// Only at the top level: a `return` indented into a function body is that
+	// function's, and eval never sees it.
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "return") {
+			t.Errorf("snippet returns at the top level, so eval cannot load it: %q", line)
+		}
+	}
+}
+
 // init names the binary that printed the snippet, rather than leave it to PATH.
 func TestInitPinsBinaryPath(t *testing.T) {
 	stdout, _, err := exec(t, "init", "zsh")

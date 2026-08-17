@@ -22,10 +22,18 @@ import (
 	"github.com/mattmc3/histdb/internal/history"
 )
 
+// importer reads one shell's history file. timeOption names the setting that
+// makes that shell write timestamps, for the note an untimed import prints.
+type importer struct {
+	parse      func(io.Reader, string) ([]importedEntry, error)
+	timeOption string
+}
+
 // importers maps a shell to its history file parser. Adding a shell means a
 // parser and an entry here.
-var importers = map[string]func(io.Reader, string) ([]importedEntry, error){
-	"zsh": parseZshHistory,
+var importers = map[string]importer{
+	"bash": {parseBashHistory, "HISTTIMEFORMAT"},
+	"zsh":  {parseZshHistory, "EXTENDED_HISTORY"},
 }
 
 // Formats a history file comes in: timestamped, bare command lines, or work
@@ -66,7 +74,7 @@ func runImport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	shell, path := fs.Args()[0], fs.Args()[1]
 
-	parse, ok := importers[shell]
+	shellImporter, ok := importers[shell]
 	if !ok {
 		return fmt.Errorf("unsupported shell %q, want one of: %s",
 			shell, strings.Join(importShells(), ", "))
@@ -81,7 +89,7 @@ func runImport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	defer file.Close()
 
-	entries, err := parse(file, *format)
+	entries, err := shellImporter.parse(file, *format)
 	if err != nil {
 		return err
 	}
@@ -144,7 +152,7 @@ func runImport(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		plural(written, "command"), len(rows)-written)
 	if untimed {
 		fmt.Fprintf(stdout, "%s has no timestamps, so times are approximate: "+
-			"set EXTENDED_HISTORY in zsh to record them\n", path)
+			"set %s in %s to record them\n", path, shellImporter.timeOption, shell)
 	}
 	return nil
 }
@@ -240,6 +248,85 @@ func parseZshHistory(r io.Reader, format string) ([]importedEntry, error) {
 		return nil, errors.New("no timestamps found, try --format " + formatPlain)
 	}
 	return entries, nil
+}
+
+// parseBashHistory reads a bash history file. HISTTIMEFORMAT makes bash write
+// `#<start>` on its own line ahead of each command, and without it the line is
+// the command alone. A command can span lines, so everything up to the next
+// timestamp belongs to the one before it. Bash records no elapsed time.
+func parseBashHistory(r io.Reader, format string) ([]importedEntry, error) {
+	var entries []importedEntry
+	var lines []string
+	var start time.Time
+
+	// A timestamped command is only complete once the next timestamp shows up,
+	// or the file ends.
+	flush := func() {
+		if len(lines) == 0 {
+			return
+		}
+		cmd := strings.Join(lines, "\n")
+		lines = nil
+		if strings.TrimSpace(cmd) != "" {
+			entries = append(entries, importedEntry{start: start, cmd: cmd})
+		}
+	}
+
+	scanner := bufio.NewScanner(r)
+	// A command can be far longer than a line of source.
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		at, timed := parseBashTimestamp(line)
+		if format == formatAuto && strings.TrimSpace(line) != "" {
+			format = formatPlain
+			if timed {
+				format = formatExtended
+			}
+		}
+		if format == formatPlain {
+			if strings.TrimSpace(line) != "" {
+				entries = append(entries, importedEntry{cmd: line})
+			}
+			continue
+		}
+		if timed {
+			flush()
+			start = at
+			continue
+		}
+		if start.IsZero() {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			return nil, fmt.Errorf("no timestamp on %q, try --format %s",
+				line, formatPlain)
+		}
+		lines = append(lines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read history: %w", err)
+	}
+	flush()
+
+	if format == formatExtended && len(entries) == 0 {
+		return nil, errors.New("no timestamps found, try --format " + formatPlain)
+	}
+	return entries, nil
+}
+
+// parseBashTimestamp reads bash's `#<epoch>` header. A command that starts with
+// a `#` and is not all digits is a comment, not a header.
+func parseBashTimestamp(line string) (time.Time, bool) {
+	digits, ok := strings.CutPrefix(line, "#")
+	if !ok {
+		return time.Time{}, false
+	}
+	secs, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(secs, 0), true
 }
 
 // parseZshRecord pulls apart `: <start>:<elapsed>;<command>`. Anything else,

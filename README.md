@@ -19,11 +19,11 @@ to stop using `histdb` you can.
 
 ## What shells are supported
 
-For now it's just Zsh, but other shells are coming soon.
+Zsh and Bash today, with other shells coming.
 
 - [x] Zsh
+- [x] Bash
 - [ ] Fish
-- [ ] Bash
 
 ## Install
 
@@ -45,6 +45,22 @@ Enable in Zsh by adding this to `.zshrc`:
 ```zsh
 source <(histdb init zsh)
 ```
+
+Or in Bash, by adding this to `.bashrc`:
+
+```bash
+eval "$(histdb init bash)"
+```
+
+Needs bash 5.0 or newer, so on macOS `brew install bash` rather than the 3.2
+that ships as `/bin/bash`.
+
+Load it after anything else that sets `PROMPT_COMMAND`, so nothing overwrites
+the hooks, but before anything that sets a `DEBUG` trap, which histdb will not
+take away from you. If both apply, load [bash-preexec] first and histdb will
+hook onto it instead, which settles the trap either way.
+
+[bash-preexec]: https://github.com/rcaloras/bash-preexec
 
 ## Usage
 
@@ -71,7 +87,8 @@ Long forms: `--here`, `--repo`, `--session`, `--all-sessions`, `--head`,
 
 With neither `-s` nor `-S`, the scope is whatever `SHARE_HISTORY` says, since
 the zsh wrapper passes `--session` for you when it is off. `-S` overrides that,
-so it is how you reach other sessions under `NO_SHARE_HISTORY`.
+so it is how you reach other sessions under `NO_SHARE_HISTORY`. Bash has no
+such option, so it searches every session until you ask for `-s`.
 
 | variable         | meaning                                                                             |
 | ---------------- | ----------------------------------------------------------------------------------- |
@@ -199,21 +216,25 @@ either.
 
 ```sh
 histdb import zsh $HISTFILE
+histdb import bash ~/.bash_history
 histdb import --format plain zsh ~/.zsh_history
 ```
 
 Importing the same file twice adds nothing the second time, so it is safe to
 re-run as the file grows. A file is one session, keyed by its path.
 
-zsh writes times only under `EXTENDED_HISTORY`, and `--format` says which kind
-of file it is: `extended`, `plain`, or `auto` to tell from the first line.
+A shell writes times into its history file only when asked to, under
+`EXTENDED_HISTORY` in zsh or `HISTTIMEFORMAT` in bash, and `--format` says
+which kind of file it is: `extended`, `plain`, or `auto` to tell from the first
+line.
 
 A history file times commands to the second and records no exit status, so an
 imported row has no `ret` and no `dur`, and two commands from the same second
 are stored a millisecond apart to keep them both. A `plain` file has no times
 at all: its commands are laid out one second apart ending at the file's
 modification time, and re-importing counts what is already stored rather than
-matching on time, which assumes the file only ever grows.
+matching on time, which assumes the file only ever grows. A bash file also has
+no elapsed time to import, since bash never writes one.
 
 ## Matching
 
@@ -255,6 +276,18 @@ ZSH_AUTOSUGGEST_STRATEGY=(histdb)
 Use `-d` in place of `--prefer-here` to suggest only from this directory, with
 no fallback.
 
+## What gets recorded
+
+If you ran it, it is recorded. A shell's history options decide what goes in
+that shell's own history file, and histdb leaves those alone: they still apply
+to the file, and they are not a reason to drop a row. Duplicates are a matter
+for searching and purging, not for recording, so `--no-dups` collapses them at
+search time and the rows stay.
+
+The one exception is a leading space. `HIST_IGNORE_SPACE` in zsh and
+`HISTCONTROL=ignorespace` in bash are how you say do not record this at all,
+and histdb honors that.
+
 ## Zsh options
 
 `histdb init zsh` installs the hooks and a small `histdb` function that reads
@@ -264,9 +297,6 @@ no fallback.
 | -------------------- | --------------------------------------------------------------------------- |
 | `HIST_IGNORE_SPACE`  | a command starting with a space is not recorded                             |
 | `HIST_REDUCE_BLANKS` | runs of whitespace are squeezed before recording                            |
-| `HIST_IGNORE_DUPS`   | a command identical to the previous one is not recorded                     |
-| `HIST_NO_FUNCTIONS`  | function definitions are not recorded                                       |
-| `HIST_NO_STORE`      | `history` and `fc` are not recorded                                         |
 | `SHARE_HISTORY`      | when off, searches are limited to the current session, unless you pass `-S` |
 | `HIST_FIND_NO_DUPS`  | searches show each command once, its newest run                             |
 
@@ -274,13 +304,59 @@ Deliberately ignored, and why:
 
 | option                                                    | why                                                                                                                                     |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `HIST_IGNORE_ALL_DUPS`, `HIST_SAVE_NO_DUPS`               | both drop older duplicates; histdb keeps everything, but you can use `--no-dups` or `HIST_FIND_NO_DUPS` to collapse them at search time |
+| `HIST_IGNORE_DUPS`, `HIST_IGNORE_ALL_DUPS`, `HIST_SAVE_NO_DUPS` | all drop duplicates; histdb keeps every run, and `--no-dups` or `HIST_FIND_NO_DUPS` collapses them at search time                  |
+| `HIST_NO_FUNCTIONS`, `HIST_NO_STORE`                      | both keep a command out of zsh's history file, which they still do; enabling histdb is itself the choice to keep it in SQLite           |
 | `INC_APPEND_HISTORY`, `INC_APPEND_HISTORY_TIME`           | histdb always writes at both ends of a command, so nothing is lost if the shell dies                                                    |
 | `HIST_ALLOW_CLOBBER`                                      | rewrites `>` as `>\|` when storing; histdb records the line as typed                                                                    |
 | `HIST_EXPIRE_DUPS_FIRST`, `SAVEHIST`                      | trimming policy, and histdb never trims                                                                                                 |
 | `EXTENDED_HISTORY`                                        | histdb always stores start time and duration                                                                                            |
 | `APPEND_HISTORY`, `HIST_SAVE_BY_COPY`, `HIST_FCNTL_LOCK`  | history-file mechanics, replaced by SQLite                                                                                              |
 | `BANG_HIST`, `HIST_VERIFY`, `HIST_BEEP`, `HIST_LEX_WORDS` | line editor behavior, not storage                                                                                                       |
+
+## Bash options
+
+Bash has no `preexec`, so `histdb init bash` installs a `DEBUG` trap and two
+`PROMPT_COMMAND` entries: one that finishes the command that just ran, and one
+that runs last so nothing the prompt itself does is mistaken for a typed line.
+Where [bash-preexec] is already loaded, histdb hooks onto it instead and leaves
+the trap where it is.
+
+Bash 5.0 or newer is required. Older bash has no sub-second clock and no
+`history -d -1`, both of which the hooks are built on. macOS still ships bash
+3.2 as `/bin/bash`, so install a current one with `brew install bash`.
+
+The command recorded is the line bash stored, not `$BASH_COMMAND`, which is one
+simple command and would report `true | false` as `true`. The history list is
+the only place the whole typed line exists, so anything that stops bash storing
+a line also hides it from histdb. To record every command anyway, histdb takes
+those settings over: it clears them, lets every line reach the list, and puts
+them back afterwards with `history -d`. Your history file ends up filtered the
+way you asked, and the SQLite rows are complete.
+
+| setting                    | history file                              | histdb   |
+| -------------------------- | ----------------------------------------- | -------- |
+| `HISTCONTROL=ignorespace`  | leading-space command left out            | not recorded |
+| `HISTCONTROL=ignoredups`   | repeat of the previous command left out   | recorded |
+| `HISTCONTROL=erasedups`    | repeat of the previous command left out   | recorded |
+| `HISTCONTROL=ignoreboth`   | both of the ignore rules above            | leading space not recorded |
+| `HISTIGNORE`               | matching command left out, `&` included   | recorded |
+
+They are read again at every prompt, so one set after histdb loaded works like
+one set before it.
+
+`erasedups` is served as `ignoredups`: erasing an older copy means finding it,
+and that is a scan of the whole list on every prompt. Turning history off
+outright, with `set +o history` or `HISTSIZE=0`, leaves no list to read at all,
+so histdb falls back to `$BASH_COMMAND` and a pipeline is recorded as its first
+command.
+
+bash-preexec strips `ignorespace` out of `HISTCONTROL` when it loads, so under
+it a command typed with a leading space is recorded like any other. That is its
+choice, not one histdb can undo without taking the setting away from you twice.
+
+A `DEBUG` trap already installed belongs to something else, so histdb leaves it
+alone, says so on stderr, and does not hook. Load histdb before whatever set
+the trap, or load bash-preexec so the two can share it.
 
 ## Recording
 

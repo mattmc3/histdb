@@ -18,48 +18,38 @@ if [[ ${HISTDB_SESSION:-} != "${UID}.$$."* ]]; then
   export HISTDB_SESSION="${UID}.$$.${EPOCHREALTIME}.${RANDOM}"
 fi
 
-# Reasons zsh itself would keep a command out of the history list. Callers read
-# $options before `emulate -L zsh`, which resets options to zsh defaults.
+# If you ran it, it is recorded. The options that keep a command out of zsh's
+# own history list are left to zsh, which applies them to its history file
+# either way, and are not a reason to drop the row here.
+#
+# HIST_IGNORE_SPACE is the exception: a leading space is how you say do not
+# record this at all. Callers read $options before `emulate -L zsh`, which
+# resets options to zsh defaults.
 _histdb_skip() {
   local cmd=$1
 
   [[ -z ${cmd//[[:space:]]/} ]] && return 0
   [[ $2 == on && $cmd == [[:space:]]* ]] && return 0
-  if [[ $3 == on ]]; then
-    # HIST_NO_FUNCTIONS: `function f { }` and `f() { }`
-    [[ $cmd == function[[:space:]]##* ]] && return 0
-    [[ $cmd == [[:alnum:]_]##[[:space:]]#\(\)[[:space:]]#\{* ]] && return 0
-  fi
-  # HIST_NO_STORE drops the commands used to read history back.
-  [[ $4 == on && ${cmd%%[[:space:]]*} == (history|fc) ]] && return 0
   return 1
 }
 
 _histdb_preexec() {
   local ignore_space=$options[histignorespace]
   local reduce_blanks=$options[histreduceblanks]
-  local ignore_dups=$options[histignoredups]
-  local no_functions=$options[histnofunctions]
-  local no_store=$options[histnostore]
   emulate -L zsh
   setopt local_options extended_glob
 
   local cmd=$1
-  _histdb_skip "$cmd" "$ignore_space" "$no_functions" "$no_store" && return 0
+  _histdb_skip "$cmd" "$ignore_space" && return 0
 
   if [[ $reduce_blanks == on ]]; then
     cmd="${${${cmd//[[:blank:]][[:blank:]]##/ }##[[:blank:]]##}%%[[:blank:]]##}"
-  fi
-
-  if [[ $ignore_dups == on && $cmd == ${_histdb_state[last_cmd]:-} ]]; then
-    return 0
   fi
 
   _histdb_state[cmd]=$cmd
   _histdb_state[start_ts]=$EPOCHREALTIME
   # Where the command was launched, not where it left the shell sitting.
   _histdb_state[cwd]=$PWD
-  _histdb_state[last_cmd]=$cmd
 
   # Recorded before the command runs, so anything that outlives the shell is
   # already on disk. The precmd write fills in how it went.

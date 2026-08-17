@@ -17,7 +17,8 @@ var shellFS embed.FS
 // snippets maps a shell name to its integration file. Adding a shell means a
 // file in shell/ and an entry here.
 var snippets = map[string]string{
-	"zsh": "shell/zsh.zsh",
+	"bash": "shell/bash.bash",
+	"zsh":  "shell/zsh.zsh",
 }
 
 func runInit(args []string, stdout io.Writer) error {

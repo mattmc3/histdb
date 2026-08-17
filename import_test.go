@@ -253,11 +253,11 @@ func TestImportUnsupportedShell(t *testing.T) {
 	useTempDB(t)
 	path := writeHistfile(t, extendedHistfile)
 
-	_, _, err := exec(t, "import", "bash", path)
+	_, _, err := exec(t, "import", "fish", path)
 	if err == nil {
 		t.Fatal("want error, got nil")
 	}
-	if !strings.Contains(err.Error(), `unsupported shell "bash"`) {
+	if !strings.Contains(err.Error(), `unsupported shell "fish"`) {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -278,6 +278,132 @@ func TestImportMissingFile(t *testing.T) {
 	_, _, err := exec(t, "import", "zsh", filepath.Join(t.TempDir(), "nope"))
 	if err == nil {
 		t.Fatal("want error, got nil")
+	}
+}
+
+// What bash writes with HISTTIMEFORMAT set: a `#<start>` line ahead of each
+// command, a multi-line command laid out as it was typed, no elapsed time
+// anywhere, and a comment that is a command like any other.
+const bashHistfile = `#1700000000
+echo one
+#1700000005
+echo 'first
+second'
+#1700000010
+echo café
+#1700000015
+# not a header
+`
+
+func TestImportBash(t *testing.T) {
+	useTempDB(t)
+	path := writeHistfile(t, bashHistfile)
+
+	stdout, _, err := exec(t, "import", "bash", path)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !strings.Contains(stdout, "imported 4 commands") {
+		t.Errorf("stdout = %q, want a count of 4", stdout)
+	}
+
+	got, _, err := exec(t, "--columns", "cmd")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for _, want := range []string{
+		"echo one",
+		"echo 'first\nsecond'",
+		"echo café",
+		"# not a header",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("search output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Without HISTTIMEFORMAT the file is bare command lines, and the note about
+// approximate times has to name what bash calls the setting.
+func TestImportBashPlainFormat(t *testing.T) {
+	useTempDB(t)
+	path := writeHistfile(t, "echo one\necho two\necho three\n")
+
+	stdout, _, err := exec(t, "import", "bash", path)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !strings.Contains(stdout, "imported 3 commands") {
+		t.Errorf("stdout = %q, want 3 imported", stdout)
+	}
+	if !strings.Contains(stdout, "set HISTTIMEFORMAT in bash") {
+		t.Errorf("stdout = %q, want bash's own setting named", stdout)
+	}
+
+	got, _, err := exec(t, "--columns", "cmd")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if want := "echo one\necho two\necho three\n"; got != want {
+		t.Errorf("search output = %q, want %q", got, want)
+	}
+}
+
+func TestParseBashHistory(t *testing.T) {
+	entries, err := parseBashHistory(strings.NewReader(bashHistfile), formatAuto)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(entries) != 4 {
+		t.Fatalf("parsed %d entries, want 4", len(entries))
+	}
+
+	if got, want := entries[0].cmd, "echo one"; got != want {
+		t.Errorf("cmd = %q, want %q", got, want)
+	}
+	if got := entries[0].start.Unix(); got != 1700000000 {
+		t.Errorf("start = %d, want 1700000000", got)
+	}
+	if got, want := entries[1].cmd, "echo 'first\nsecond'"; got != want {
+		t.Errorf("cmd = %q, want %q", got, want)
+	}
+	if got, want := entries[3].cmd, "# not a header"; got != want {
+		t.Errorf("cmd = %q, want %q", got, want)
+	}
+	if got := entries[3].start.Unix(); got != 1700000015 {
+		t.Errorf("start = %d, want 1700000015", got)
+	}
+}
+
+// The first line decides the format, so a header turning up later in what
+// looked like a plain file is a command line like any other.
+func TestParseBashHistoryDetectsFromFirstLine(t *testing.T) {
+	entries, err := parseBashHistory(strings.NewReader(
+		"echo bare\n#1700000000\necho stamped\n"), formatAuto)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("parsed %d entries, want 3", len(entries))
+	}
+	if got, want := entries[1].cmd, "#1700000000"; got != want {
+		t.Errorf("cmd = %q, want %q", got, want)
+	}
+	if !entries[1].start.IsZero() {
+		t.Errorf("start = %v, want no time in a plain file", entries[1].start)
+	}
+}
+
+// An extended file has to start with a timestamp, or there is no telling when
+// the commands ahead of the first one ran.
+func TestParseBashHistoryRejectsUntimedLead(t *testing.T) {
+	_, err := parseBashHistory(strings.NewReader(
+		"echo bare\n#1700000000\necho stamped\n"), formatExtended)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no timestamp") {
+		t.Errorf("err = %v", err)
 	}
 }
 

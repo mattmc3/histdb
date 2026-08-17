@@ -20,7 +20,8 @@ usage:
 
 import options:
       --format F   extended, plain, or auto to tell from the file (default)
-                   zsh writes extended only under EXTENDED_HISTORY, and a
+                   a shell writes an extended file only when asked to, under
+                   EXTENDED_HISTORY in zsh or HISTTIMEFORMAT in bash, and a
                    plain file has no times, so they are guessed from its
                    modification time and only its order is trusted
 
@@ -37,7 +38,8 @@ search options:
       --no-dups       only the newest run of each command
 
 With neither -s nor -S, the zsh wrapper decides: SHARE_HISTORY shows every
-session, NO_SHARE_HISTORY only this one. -S overrides it either way.
+session, NO_SHARE_HISTORY only this one. -S overrides it either way. Bash has
+no such option, so it shows every session.
 
 --since and --until take 2026-01-15, "2026-01-15 09:30", an RFC3339 time,
 @1700000000, yesterday, today, now, a duration like 2h or 90m, counts like
@@ -76,10 +78,15 @@ environment:
                    exported by histdb init; set it before sourcing to choose
   HISTDB_SESSION   session key, set by the shell integration
 
-supported shells: zsh
+supported shells: bash (5.0 or newer), zsh
 
-enable in zsh:
+A shell's own history options decide what goes in its history file, not what
+histdb records: if you ran it, it is stored. A leading space is the exception,
+under HIST_IGNORE_SPACE or HISTCONTROL=ignorespace.
+
+enable in your shell:
   source <(histdb init zsh)
+  source <(histdb init bash)
 `
 
 func main() {
