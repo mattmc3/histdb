@@ -9,9 +9,14 @@ if ((BASH_VERSINFO[0] < 5)); then
   echo "histdb: bash 5.0 or newer is required, this is $BASH_VERSION" >&2
 fi
 
-# EPOCHREALTIME's separator is the locale's and its fraction is always six
-# digits, so rebuild it rather than hope for a period.
-_histdb_now() { local t=${EPOCHREALTIME//[!0-9]}; printf '%s.%s\n' "${t%??????}" "${t: -6}"; }
+# EPOCHREALTIME's separator is the locale's, and its fraction is not always
+# six digits, so rebuild it rather than trust either.
+_histdb_now() {
+  local t=$EPOCHREALTIME s f
+  s=${t%%[!0-9]*}
+  f=${t:${#s}+1}000000
+  printf '%s.%s\n' "$s" "${f:0:6}"
+}
 
 # Bash has no $TTY, and the terminal does not change under a session.
 _histdb_tty=$(tty 2>/dev/null) || _histdb_tty=
@@ -258,7 +263,9 @@ if ((BASH_VERSINFO[0] >= 5)) && [[ $- == *i* &&
       if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
         PROMPT_COMMAND=(_histdb_precmd ${PROMPT_COMMAND[@]+"${PROMPT_COMMAND[@]}"} _histdb_ready)
       else
-        PROMPT_COMMAND="_histdb_precmd${PROMPT_COMMAND:+$'\n'${PROMPT_COMMAND}}"$'\n'"_histdb_ready"
+        _histdb_nl=$'\n'
+        PROMPT_COMMAND="_histdb_precmd${PROMPT_COMMAND:+${_histdb_nl}${PROMPT_COMMAND}}${_histdb_nl}_histdb_ready"
+        unset _histdb_nl
       fi
     fi
     unset _histdb_trap

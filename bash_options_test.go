@@ -292,3 +292,19 @@ func TestBashExportsDatabasePath(t *testing.T) {
 		t.Errorf("HISTDB_FILE not exported as %q:\n%s", b.db, out)
 	}
 }
+
+// EPOCHREALTIME can arrive with a short fraction or a comma separator. Unset,
+// bash lets a test set it.
+func TestBashPadsShortEpochFraction(t *testing.T) {
+	b := newBashShell(t)
+	out := b.run("", "unset EPOCHREALTIME\n"+
+		"EPOCHREALTIME=1791475476.10409; echo \"a=$(_histdb_now)\"\n"+
+		"EPOCHREALTIME=1791475476,104090; echo \"b=$(_histdb_now)\"\n"+
+		"EPOCHREALTIME=1791475476; echo \"c=$(_histdb_now)\"")
+
+	for _, want := range []string{"a=1791475476.104090", "b=1791475476.104090", "c=1791475476.000000"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %s:\n%s", want, out)
+		}
+	}
+}
